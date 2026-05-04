@@ -43,16 +43,21 @@ Submission deadline: May 9.
 ## Architecture
 
 ```
-[ AMD MI300X droplet ]
-    ├── vLLM serving Qwen2-VL-7B (port 8000)
-    ├── FastAPI backend (port 8001) — /describe /query /interaction-log /health
-    └── Nightly LoRA training (PyTorch + peft)
+[ AMD MI300X host droplet ]
+    └── Docker container `rocm` (vLLM image, ROCm 7)
+        ├── vLLM serving Qwen2-VL-7B (port 8000, published to host)
+        ├── FastAPI backend (port 8001 — planned, also published to host)
+        └── Nightly LoRA training (PyTorch + peft)
                     │
                     │  HTTPS/JSON over public droplet IP
                     ▼
 [ Hugging Face Space ]
     └── React frontend — camera/mic/TTS, calls backend API
 ```
+
+`/shared-docker` is bind-mounted from host into the container at the same
+path, so paths in code are identical on both sides — see
+[backend/CLAUDE.md](backend/CLAUDE.md) for details.
 
 Why every major decision (so you don't second-guess them):
 
@@ -90,12 +95,18 @@ When making tradeoffs, this is the priority:
 
 ## Working on the droplet
 
-You are running ON the droplet. Concretely this means:
+You are running ON the host droplet. Concretely this means:
 
-- Your filesystem is the droplet's filesystem at `/workspace/live-sight/`.
-- Long-running processes go in tmux sessions, never as foreground bash.
-- Your `~/.claude/` and `~/.claude.json` are on droplet disk and will be
-  lost if the droplet is destroyed without backup.
+- Your filesystem is the host's filesystem; the repo lives at
+  `/shared-docker/live-sight/`.
+- GPU workloads (vLLM, PyTorch) run **inside Docker container `rocm`**,
+  reached via `docker exec`. The container does not have ROCm tools,
+  PyTorch, or vLLM installed on the host — only inside the container.
+- Long-running processes (vLLM, FastAPI) are started with `docker exec -d`
+  and log to `/shared-docker/logs/`. They survive SSH disconnects because
+  the docker daemon owns them — host tmux is not required for that.
+- Your `~/.claude/` and `~/.claude.json` are on host disk and will be
+  lost if the host is destroyed without backup.
 
 Before destroying the droplet, the user must run `scripts/dev/destroy-safely.sh`
 which backs up Claude Code state to GitHub and HF before destroy.

@@ -1,11 +1,38 @@
-# Backend — Python on AMD MI300X
+# Backend — Python on AMD MI300X (Docker)
 
 ## Environment
 
-- AMD Developer Cloud, MI300X 1-GPU droplet (192GB VRAM, 20 vCPU, 240GB RAM)
-- Quick-start image: vLLM 0.17.1 / ROCm 7.2.0 (vLLM pre-installed, no Docker)
-- Python 3.11 (provided by image)
-- Working directory: `/workspace/live-sight/`
+- AMD MI300X host droplet (192GB VRAM, 20 vCPU, 240GB RAM).
+- vLLM and PyTorch run **inside Docker container `rocm`**, not on the host.
+- Image provides vLLM 0.17.1+rocm700, ROCm 7.x, Python 3.12.
+- Container ports `8000`, `8888`, `30000` published to the host.
+- `/shared-docker` is bind-mounted into the container at the **same path**,
+  so files at `/shared-docker/live-sight/` are accessible at the same path
+  inside the container — paths in code do not change between host and container.
+
+### Where things live
+
+| Thing                | Path (same on host and in container) |
+|----------------------|--------------------------------------|
+| Repo                 | `/shared-docker/live-sight/`         |
+| Models               | `/shared-docker/models/`             |
+| Logs (vllm, api)     | `/shared-docker/logs/`               |
+| `.env` (HF_TOKEN…)   | `/shared-docker/live-sight/.env`     |
+
+### Running commands in the container
+
+```bash
+docker exec rocm <cmd>              # one-shot
+docker exec -it rocm bash           # interactive shell
+docker exec -d rocm bash -c "..."   # detached / background process
+docker logs -f rocm                 # container's main process (jupyter) logs
+```
+
+vLLM and the FastAPI server should be started **detached** with `docker exec -d`
+and have their stdout/stderr redirected to files under `/shared-docker/logs/`.
+That way they survive an SSH disconnect, the host shell exiting, and the
+Claude Code session restarting — same guarantee tmux gave us, without the
+ceremony of nested tmux-inside-docker.
 
 ## ROCm-specific gotchas
 
@@ -16,6 +43,8 @@
 - vLLM CUDA-specific flags don't all work on ROCm. Check vLLM ROCm docs
   before using any flag not seen in AMD examples.
 - bitsandbytes 4-bit quantization is unreliable on ROCm. Use FP16/BF16.
+- vLLM on ROCm prints `WARNING ... Using legacy triton_kernels on ROCm` at
+  startup — that is normal, not a problem.
 
 ## Service layout
 
@@ -79,6 +108,7 @@ before optimizing the model.
 
 ## Running services
 
-vLLM and the FastAPI server both run in tmux. See
-`scripts/dev/start-services.sh` for the setup. Never run them as
-foreground processes — they need to survive your SSH disconnect.
+Both vLLM and the FastAPI server run **inside the `rocm` container**, started
+with `docker exec -d` and logging to `/shared-docker/logs/`. The smoke test
+runs from the host and hits `http://localhost:8000` because the container
+publishes port 8000 to the host. See `backend/scripts/start-vllm.sh`.
