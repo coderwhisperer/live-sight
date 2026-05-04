@@ -114,7 +114,18 @@ before optimizing the model.
 
 ## Running services
 
-Both vLLM and the FastAPI server run **inside the `rocm` container**, started
-with `docker exec -d` and logging to `/shared-docker/logs/`. The smoke test
-runs from the host and hits `http://localhost:8000` because the container
-publishes port 8000 to the host. See `backend/scripts/start-vllm.sh`.
+Split intentionally:
+
+- **vLLM** runs **inside the `rocm` container**, started with `docker exec -d`,
+  logging to `/shared-docker/logs/vllm.log`. Smoke test from host hits
+  `http://localhost:8000` via the published port.
+- **FastAPI** runs **on the host**, started with `nohup`, PID at
+  `/shared-docker/logs/api.pid`, logs at `/shared-docker/logs/api.log` and
+  `/shared-docker/logs/api.stdout.log`. It calls vLLM at `http://localhost:8000`
+  (the published Docker port) and binds `0.0.0.0:8001` for the HF Space
+  frontend to reach it.
+
+Why split: keeps Python web deps (FastAPI, httpx, pillow) off the GPU
+container; lets us edit and restart FastAPI without `docker exec` round-trips.
+Network-wise it's free — host→container localhost goes through `docker-proxy`
+on `lo`, no NAT hop.
