@@ -8,7 +8,7 @@ Current state of the live droplet. Update this when:
 
 ## Last updated
 
-2026-05-04 19:59 UTC — task 01 complete (vLLM serving, smoke test PASS).
+2026-05-04 20:50 UTC — task 02 complete (FastAPI on host, external smoke test PASS).
 
 ## Droplet details
 
@@ -21,14 +21,24 @@ Current state of the live droplet. Update this when:
 
 ## Services running
 
-vLLM and (planned) FastAPI run **inside container `rocm`**, started detached
-with `docker exec -d`. No host tmux. Logs live at `/shared-docker/logs/`.
+vLLM runs **inside container `rocm`**; FastAPI runs **on the host** and calls
+vLLM via the published port at `localhost:8000`. Both started detached
+(`docker exec -d` for vLLM, `nohup` for FastAPI) — see ADR in `decisions.md`.
+Logs live at `/shared-docker/logs/`.
 
-| Service | Where         | Port (container → host) | Status                              | Log                              |
-|---------|---------------|--------------------------|-------------------------------------|----------------------------------|
-| vLLM    | rocm container| 8000 → 8000              | running (pid 177 in container)      | `/shared-docker/logs/vllm.log`   |
-| FastAPI | rocm container| 8001 → 8001 (planned)    | not started (task 02)               | `/shared-docker/logs/api.log`    |
-| Training| rocm container| —                        | idle (no nightly job yet)           | —                                |
+| Service | Where          | Port                   | Status                                                    | Log                                                                |
+|---------|----------------|------------------------|-----------------------------------------------------------|--------------------------------------------------------------------|
+| vLLM    | rocm container | 8000 (internal only)   | running (pid 177 in container)                            | `/shared-docker/logs/vllm.log`                                     |
+| FastAPI | host           | 8001 (public)          | running (PID file `/shared-docker/logs/api.pid`)          | `/shared-docker/logs/api.log` + `/shared-docker/logs/api.stdout.log` |
+| Training| rocm container | —                      | idle (no nightly job yet)                                 | —                                                                  |
+
+vLLM args in use: `--served-model-name qwen2-vl --port 8000 --max-model-len 4096 --dtype bfloat16`,
+with `HIP_VISIBLE_DEVICES=0` and `PYTORCH_ALLOC_CONF=expandable_segments:True`.
+
+FastAPI: uvicorn bound `0.0.0.0:8001`, venv at `backend/.venv/`, started by
+`backend/scripts/start-api.sh` (idempotent — won't double-start). Stop with
+`backend/scripts/stop-api.sh`. Interaction logs append to
+`/shared-docker/data/interactions/YYYY-MM-DD.jsonl`.
 
 vLLM args in use: `--served-model-name qwen2-vl --port 8000 --max-model-len 4096 --dtype bfloat16`,
 with `HIP_VISIBLE_DEVICES=0` and `PYTORCH_ALLOC_CONF=expandable_segments:True`.
