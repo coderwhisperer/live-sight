@@ -26,6 +26,38 @@ swap to an MoE model (Mixtral, Qwen2-MoE, DeepSeek): then the legacy path
 from the same file — that one means triton itself failed and serving will
 be broken.
 
+## Networking — `curl <public-ip>` from the host tells you nothing about external reachability
+
+**Cause**: The host owns its public IP directly on `eth0` (`ip -4 addr show`
+lists `129.212.179.191/20` on eth0 — normal for DigitalOcean droplets).
+When you `curl http://<public-ip>:<port>` from the host, the kernel sees
+the destination as one of its own IPs and short-circuits through `lo` —
+the packet never traverses `eth0`, never hits `iptables FORWARD` /
+`DOCKER-USER`, never leaves the box. A sub-millisecond response time
+(e.g. `0.000962s`) is the tell.
+**Fix**: To verify external reachability, curl from your workstation,
+not from the droplet. From the droplet itself, `curl localhost:<port>`
+is honest — testing the published port via the public IP is not.
+
+## Debugging vLLM from your workstation without exposing port 8000
+
+**Cause**: Port 8000 (vLLM) is intentionally blocked from the public
+internet by an iptables `DOCKER-USER` DROP rule supplied by the AMD ROCm
+image. The architecture has the HF Space talk to FastAPI on 8001, not to
+vLLM directly. So you can't just `curl <droplet-ip>:8000` from your laptop.
+**Fix**: SSH local port forward — opens nothing on the droplet's public
+interface, just tunnels over the existing SSH connection:
+
+```bash
+ssh -L 8000:localhost:8000 root@<droplet-ip>      # leave session open
+# then on your workstation, in another terminal:
+curl http://localhost:8000/v1/models
+```
+
+`localhost:8000` on your laptop now reaches `localhost:8000` on the
+droplet, which is where `docker-proxy` is listening. The DOCKER-USER
+DROP rule sees in-iface=`lo` (not `eth0`) and doesn't fire.
+
 ## vLLM — KV cache fills ~91% of GPU memory by default
 
 **Cause**: vLLM defaults `--gpu-memory-utilization` to 0.9. With
