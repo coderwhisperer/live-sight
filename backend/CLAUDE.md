@@ -43,8 +43,14 @@ ceremony of nested tmux-inside-docker.
 - vLLM CUDA-specific flags don't all work on ROCm. Check vLLM ROCm docs
   before using any flag not seen in AMD examples.
 - bitsandbytes 4-bit quantization is unreliable on ROCm. Use FP16/BF16.
-- vLLM on ROCm prints `WARNING ... Using legacy triton_kernels on ROCm` at
-  startup — that is normal, not a problem.
+- vLLM on ROCm prints `WARNING ... [gpt_oss_triton_kernels_moe.py:56]
+  Using legacy triton_kernels on ROCm` at every startup. It fires at
+  *module import* in a fused-MoE kernel file, so it's harmless for our
+  dense model (Qwen2-VL-7B) — the code path is never executed. If we
+  ever swap in an MoE model (Mixtral, Qwen2-MoE, DeepSeek), re-evaluate:
+  the legacy path may be slower or differ in numerics. A sibling
+  `ERROR Failed to import Triton kernels` from the same file is **not**
+  the same thing — that one means triton itself failed to import.
 
 ## Service layout
 
