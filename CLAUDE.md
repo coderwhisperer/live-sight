@@ -44,10 +44,10 @@ Submission deadline: May 9.
 
 ```
 [ AMD MI300X host droplet ]
-    └── Docker container `rocm` (vLLM image, ROCm 7)
-        ├── vLLM serving Qwen2-VL-7B (port 8000, published to host)
-        ├── FastAPI backend (port 8001 — planned, also published to host)
-        └── Nightly LoRA training (PyTorch + peft)
+    ├── Docker container `rocm` (vLLM image, ROCm 7)
+    │   ├── vLLM serving Qwen2-VL-7B (port 8000, host-internal only)
+    │   └── Nightly LoRA training (PyTorch + peft)
+    └── FastAPI backend on host (port 8001, public)
                     │
                     │  HTTPS/JSON over public droplet IP
                     ▼
@@ -105,9 +105,12 @@ You are running ON the host droplet. Concretely this means:
 - GPU workloads (vLLM, PyTorch) run **inside Docker container `rocm`**,
   reached via `docker exec`. The container does not have ROCm tools,
   PyTorch, or vLLM installed on the host — only inside the container.
-- Long-running processes (vLLM, FastAPI) are started with `docker exec -d`
-  and log to `/shared-docker/logs/`. They survive SSH disconnects because
-  the docker daemon owns them — host tmux is not required for that.
+- vLLM is started inside the `rocm` container with `docker exec -d`,
+  logging to `/shared-docker/logs/vllm.log`. FastAPI runs **on the host**
+  via `backend/scripts/start-api.sh` (nohup + PID file at
+  `/shared-docker/logs/api.pid`), logging to `/shared-docker/logs/api.log`.
+  Both survive SSH disconnects without host tmux — vLLM because the docker
+  daemon owns the process, FastAPI because nohup detaches it from the shell.
 - Your `~/.claude/` and `~/.claude.json` are on host disk and will be
   lost if the host is destroyed without backup.
 

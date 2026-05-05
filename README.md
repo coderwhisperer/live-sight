@@ -1,4 +1,4 @@
-# Live Sight
+<img src="frontend/public/logo-wordmark.svg" alt="Live Sight" width="380">
 
 A vision assistant that learns you.
 
