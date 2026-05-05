@@ -9,7 +9,7 @@ import type {
 } from './types';
 
 const API_BASE: string =
-  import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3001';
+  import.meta.env.VITE_API_BASE_URL ?? '/api' ; //'http://localhost:3001';
 
 async function postJSON<TReq, TRes>(path: string, body: TReq): Promise<TRes> {
   const res = await fetch(`${API_BASE}${path}`, {
