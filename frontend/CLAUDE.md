@@ -2,10 +2,22 @@
 
 ## Environment
 
-- TypeScript 5.x strict mode
-- React 18, Vite, Tailwind CSS, shadcn/ui
+- TypeScript 5+ strict mode (currently TS 6 via `create-vite` @latest)
+- React 18+ (currently React 19), Vite 8, Tailwind 3, shadcn/ui
 - Deployed as a static Hugging Face Space (the React variant, not Gradio)
 - The Space calls our AMD droplet backend at `https://<droplet-ip>:8001`
+
+## Local development
+
+The droplet may be destroyed when not actively in use. For laptop dev
+without it, the frontend points at a local mock backend on
+`http://localhost:3001` (see `mock/` and task 04). Switch targets via
+`.env.local`:
+
+```
+VITE_API_BASE_URL=http://localhost:3001       # mock
+VITE_API_BASE_URL=http://<droplet-ip>:8001    # real backend
+```
 
 ## Layout
 

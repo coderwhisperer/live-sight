@@ -10,6 +10,10 @@ node_modules/
 dist/
 .vite/
 
+# Frontend
+frontend/.env.local
+frontend/*.local
+
 # Secrets
 .env
 *.key

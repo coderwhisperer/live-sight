@@ -75,7 +75,10 @@ Why every major decision (so you don't second-guess them):
 
 - **Python**: 3.11+, type hints everywhere, ruff for lint/format, pytest.
   Use `pyproject.toml`. No requirements.txt.
-- **TypeScript**: 5.x strict, React 18 functional only, Tailwind, shadcn/ui.
+- **TypeScript**: 5+ strict, React 18+ functional only, Tailwind 3, shadcn/ui.
+  (Scaffolded via `npm create vite@latest` on 2026-05-05 — landed on React 19,
+  TS 6, Vite 8. Tailwind pinned to v3 because the shadcn init at the time
+  hadn't been re-tested against v4 in this project.)
 - **Commits**: conventional commits (feat:, fix:, docs:, refactor:).
   One concern per commit.
 - **API contract**: defined in `docs/architecture.md`. If you change the
