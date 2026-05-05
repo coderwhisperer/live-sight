@@ -30,3 +30,8 @@ frontend/*.local
 # OS
 .DS_Store
 Thumbs.db
+
+# Personal scratch / debug scripts at repo root — keep them in the working
+# tree but out of git. Project-relevant utilities go under scripts/dev/.
+/ocr-test.sh
+/*.local.sh

@@ -89,6 +89,45 @@ missing-dir, handle them explicitly.
 **Smell to watch for**: any `$(... 2>/dev/null | ...)` under `set -euo
 pipefail`. The redirect hides exactly the diagnostics you'd need.
 
+## Secrets — `docker exec -e HF_TOKEN="$value"` leaks the token to `ps`
+
+**Cause** (hit 2026-05-05): we ran
+```bash
+docker exec -e HF_TOKEN="$(grep ^HF_TOKEN= ... | cut -d= -f2)" rocm bash -c '...'
+```
+to inject the HF token into the container for a `huggingface-cli download`.
+That works, but the literal token value ends up on the docker-exec command
+line. While the process is running, `ps -eo cmd` shows it to anyone with
+shell access on the host (and `/proc/<pid>/cmdline` is world-readable by
+default on Linux). The token also shows up in any tool output that
+captures `ps` — including this Claude Code session's transcript.
+
+**Fix**: don't pass secrets as `-e KEY=value` on a docker exec/run command
+line. Two safer patterns:
+
+1. **`--env-file`** (preferred for our setup, since the .env is already on
+   the bind-mounted volume):
+   ```bash
+   docker exec --env-file /shared-docker/live-sight/.env rocm bash -c '...'
+   ```
+   The container only sees the env vars; `ps` shows the file path, not
+   the values.
+
+2. **Read inside the container** (no env passing at all — what
+   `provision.sh` does):
+   ```bash
+   docker exec rocm bash -c '
+     export HF_TOKEN=$(grep ^HF_TOKEN /shared-docker/live-sight/.env | cut -d= -f2-)
+     huggingface-cli download …
+   '
+   ```
+   The grep runs inside the container, so the token never crosses a
+   command-line boundary.
+
+**If you've already leaked**: rotate the token at huggingface.co/settings/tokens.
+The exposure window is short (only while the docker exec process runs)
+but real, especially on a multi-tenant host.
+
 ## AMD ROCm image — `apt-get upgrade` during active work breaks Docker / kernel state
 
 **Cause**: The AMD ROCm image pins specific kernel modules, ROCm runtime,

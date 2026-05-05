@@ -30,8 +30,8 @@ Logs live at `/shared-docker/logs/`.
 
 | Service | Where          | Port                   | Status                                                       | Log                                                                |
 |---------|----------------|------------------------|--------------------------------------------------------------|--------------------------------------------------------------------|
-| vLLM    | rocm container | 8000 (internal only)   | running (pid 124 in container)                               | `/shared-docker/logs/vllm.log`                                     |
-| FastAPI | host           | 8001 (public)          | running (host PID at `/shared-docker/logs/api.pid`, was 8918)| `/shared-docker/logs/api.log` + `/shared-docker/logs/api.stdout.log` |
+| vLLM    | rocm container | 8000 (internal only)   | running (pid 1246 in container, restarted on 3-VL swap)      | `/shared-docker/logs/vllm.log`                                     |
+| FastAPI | host           | 8001 (public)          | running (host PID at `/shared-docker/logs/api.pid`, was 65772)| `/shared-docker/logs/api.log` + `/shared-docker/logs/api.stdout.log` |
 | Training| rocm container | —                      | idle (no nightly job yet)                                    | —                                                                  |
 
 vLLM args in use: `vllm serve /shared-docker/models/qwen3-vl-8b --served-model-name qwen2-vl --port 8000 --max-model-len 4096 --dtype bfloat16`,
@@ -51,10 +51,45 @@ will require either lower `--gpu-memory-utilization` or a smaller `--max-model-l
 | Path                                  | Model                       | Size | Notes                                                                                       |
 |---------------------------------------|-----------------------------|------|---------------------------------------------------------------------------------------------|
 | `/shared-docker/models/qwen3-vl-8b/`  | Qwen/Qwen3-VL-8B-Instruct   | 17 G | **Active** — being served by vLLM. Downloaded 2026-05-05 during task 06 model swap.         |
-| `/shared-docker/models/qwen2-vl-7b/`  | Qwen/Qwen2-VL-7B-Instruct   | 16 G | Kept on disk as a fallback during the swap evaluation. Safe to delete once 3-VL is locked in. |
+| `/shared-docker/models/qwen2-vl-7b/`  | Qwen/Qwen2-VL-7B-Instruct   | 16 G | Leftover from the task 06 A/B test on this droplet. **Not** re-downloaded on fresh droplets — `provision.sh` only fetches Qwen3-VL. Safe to delete; kept as inert backup. |
 
 vLLM serves the active model under the historical alias `qwen2-vl` so the
 FastAPI client doesn't need to change. Underlying weights are 3-VL.
+
+## Fresh droplet recovery playbook
+
+Three commands, in order, to take a destroyed-and-recreated droplet back
+to working state. Assumes the new droplet was provisioned from the AMD
+ROCm image (container `rocm` running, `/shared-docker` bind-mounted) and
+that you have your GitHub PAT and HF_TOKEN handy.
+
+```bash
+# 1. Clone the repo onto the bind mount.
+#    Replace <gh-pat> with a GitHub PAT that has read access to coderwhisperer/live-sight.
+mkdir -p /shared-docker && cd /shared-docker && \
+  git clone https://<gh-pat>@github.com/coderwhisperer/live-sight.git
+
+# 2. Restore the .env file (HF_TOKEN at minimum, ELEVENLABS_API_KEY optional).
+#    The .env is gitignored so the secret never lives in the repo — paste it manually.
+cat > /shared-docker/live-sight/.env <<'EOF'
+HF_TOKEN=hf_xxx
+ELEVENLABS_API_KEY=
+EOF
+chmod 600 /shared-docker/live-sight/.env
+
+# 3. Run provision — handles the model download, venv, vLLM start, FastAPI start, and smoke test.
+#    First run takes ~15 min if HF cache is cold; ~1 min on a re-provision.
+cd /shared-docker/live-sight && ./scripts/dev/provision.sh
+```
+
+After provision exits cleanly (last line: `Droplet is in the state described
+in docs/wiki/setup-state.md.`), update the **Last updated** and **Public IP**
+fields above. Run `backend/scripts/smoke-test-api.sh` from your laptop using
+the new public IP to confirm external reachability.
+
+Before destroying, run `scripts/dev/destroy-safely.sh` from the host to push
+any uncommitted state to GitHub, snapshot Claude Code state into the repo,
+and push adapters/data to HF.
 
 ## Adapters on disk
 

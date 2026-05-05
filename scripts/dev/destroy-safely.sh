@@ -3,15 +3,15 @@
 # Run this AS THE LAST THING before clicking destroy in the AMD console.
 #
 # Usage: ./destroy-safely.sh [--force]
-#   --force  Skip the human confirmation prompt at the end
+#   --force  Skip the human confirmation prompts (final + uncommitted-work)
 
 set -euo pipefail
 
-REPO_ROOT="/workspace/live-sight"
+REPO_ROOT="/shared-docker/live-sight"
 HF_MODEL_REPO="${HF_MODEL_REPO:-friendly-coder-ai/live-sight}"
 HF_DATA_REPO="${HF_DATA_REPO:-friendly-coder-ai/live-sight-data}"
-ADAPTERS_DIR="${ADAPTERS_DIR:-/workspace/adapters}"
-DATA_DIR="${DATA_DIR:-/workspace/data}"
+ADAPTERS_DIR="${ADAPTERS_DIR:-/shared-docker/adapters}"
+DATA_DIR="${DATA_DIR:-/shared-docker/data}"
 FORCE="${1:-}"
 
 cd "$REPO_ROOT"
@@ -22,10 +22,21 @@ echo "  Adapters → HF model: $HF_MODEL_REPO"
 echo "  Data → HF dataset: $HF_DATA_REPO"
 echo ""
 
-# 1. Confirm clean working tree or stage everything
+# 1. Stage uncommitted work — but show it first.
+# `git add -A` is broad; surface what would land in the snapshot commit so
+# accidentally-tracked secrets or junk get noticed before being committed.
 echo "[1/6] Checking git status..."
 if [[ -n "$(git status --porcelain)" ]]; then
-  echo "    Uncommitted changes detected. Staging and committing..."
+  echo "    --- Uncommitted changes detected. The following will be staged: ---"
+  git status --short
+  echo "    --- end of changes ---"
+  if [[ "$FORCE" != "--force" ]]; then
+    read -p "    Stage and commit these as the pre-destroy snapshot? [yes/no] " ANS
+    if [[ "$ANS" != "yes" ]]; then
+      echo "    Aborted. Resolve uncommitted work manually, then re-run." >&2
+      exit 1
+    fi
+  fi
   git add -A
   git commit -m "chore: pre-destroy snapshot $(date -u +%Y-%m-%dT%H:%MZ)"
 fi

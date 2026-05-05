@@ -14,10 +14,10 @@
 #     INTERNAL ONLY. The AMD ROCm image lays down an iptables DOCKER-USER
 #     rule that DROPs external traffic to 8000. This script does NOT modify
 #     it — that protection is correct for our architecture.
-#   - FastAPI backend will serve on container port 8001, published to host
-#     8001 (task 02; not started by this script). It's the public surface
-#     for the HF Space frontend. There is no DOCKER-USER rule for 8001,
-#     so it'll be reachable from the internet by default once it ships.
+#   - FastAPI backend serves on host port 8001 (this script DOES start it).
+#     It's the public surface for the HF Space frontend. There is no
+#     DOCKER-USER rule for 8001, so it's reachable from the internet by
+#     default once running.
 #   - To debug vLLM directly from your workstation, use SSH local port
 #     forwarding instead of opening 8000:
 #       ssh -L 8000:localhost:8000 root@<droplet-ip>
@@ -104,12 +104,16 @@ fi
 # stderr too, so nothing reached the terminal. See gotchas.md.
 step "ensuring model at ${MODEL_DIR}"
 mkdir -p "${MODEL_DIR}"
+# Shard count is model-specific (Qwen2-VL-7B has 5, Qwen3-VL-8B has 4) —
+# we just check ">=1 shard + index.json" to mean "download completed."
+# huggingface-cli moves files atomically (.incomplete → final name), so
+# a non-zero shard count + index.json means the rest is consistent.
 shard_count=$(find "${MODEL_DIR}" -maxdepth 1 -name 'model-*.safetensors' | wc -l)
-if [[ -f "${MODEL_DIR}/model.safetensors.index.json" ]] && [[ "${shard_count}" -ge 5 ]]; then
+if [[ -f "${MODEL_DIR}/model.safetensors.index.json" ]] && [[ "${shard_count}" -ge 1 ]]; then
   size=$(du -sh "${MODEL_DIR}" | cut -f1)
   echo "model already present (${shard_count} shards, ${size}), skipping download"
 else
-  echo "downloading ${MODEL_REPO} (~16GB; can take 5-15 minutes)..."
+  echo "downloading ${MODEL_REPO} (~17GB; can take 5-15 minutes)..."
   echo "(progress streams from huggingface-cli below)"
   echo
   docker exec "${CONTAINER}" bash -c '
@@ -122,10 +126,10 @@ else
   # Verify the download actually completed: huggingface-cli's exit status
   # already covers fatal errors, but defense-in-depth against partial state.
   shard_count=$(find "${MODEL_DIR}" -maxdepth 1 -name 'model-*.safetensors' | wc -l)
-  if [[ ! -f "${MODEL_DIR}/model.safetensors.index.json" ]] || [[ "${shard_count}" -lt 5 ]]; then
+  if [[ ! -f "${MODEL_DIR}/model.safetensors.index.json" ]] || [[ "${shard_count}" -lt 1 ]]; then
     echo "ERROR: model download finished but state looks incomplete" >&2
     echo "  index.json present: $([[ -f ${MODEL_DIR}/model.safetensors.index.json ]] && echo yes || echo no)" >&2
-    echo "  shards: ${shard_count} (expected >=5)" >&2
+    echo "  shards: ${shard_count} (expected >=1)" >&2
     exit 1
   fi
   echo "downloaded ${shard_count} shards"
