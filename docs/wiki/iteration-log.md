@@ -81,3 +81,96 @@ at ~370 ms warm. ~5x of headroom for adapter overhead in task 04.
 should produce noticeably different outputs). The `mode` field is
 already plumbed through to the handler but currently ignored.
 
+---
+
+### 2026-05-05 — Task 06 (renumbered from 03): mode-aware prompts
+
+**Tried**: Wired the `mode` field through to vLLM. Eight prompt iterations
+on the same fixed image matrix (kitchen, hallway, open-book stack with
+visible spine titles "BEAUTY FOOD," "Home, Chic," "What on earth"):
+
+| Iter | Approach | Result |
+|------|----------|--------|
+| 1 | System role, advisory ("focus on...") | Modes nearly indistinguishable |
+| 2 | System role, aggressive ("you will ONLY... you will NOT...") + example outputs | Read bailed every input; navigate echoed example verbatim on kitchen |
+| 3 | Structural change: prepend system to user message text | Read still bailed; kitchen-navigate stopped regurgitating |
+| 4 | Soften read's bail clause, move to end | Read still bailed |
+| 5 | Drop the verbatim canned string, vary wording | Read bailed with the new example string instead — attractor was the example, not the specific phrase |
+| 6 | Drop the no-text example entirely, soften restrictions | OCR engaged (370ms vs ~90ms canned), but model refused to commit ("not clear enough to read") and described scenes on no-text inputs |
+| 7 | **Switch to simple direct user prompts; drop system role entirely** | All 5 acceptance criteria pass. Read transcribes "BEAUTY FOOD" / "HOME CHIC". Navigate is image-specific. |
+| 8 | Tighten navigate prompt (direction-first, not describe-then-navigate) + per-mode max_tokens (navigate=350, others=600) | Final committed state |
+
+**Result on iteration 8 (committed)**, same fixed test images:
+
+- `/describe?mode=navigate` (511–580 ms): direction-first output —
+  *"In front of you, there's a man and a woman... To your left, there's
+  a stove... To your right, there's a counter..."* and on hallway,
+  *"...about 3 paces away from you."* All three under the 2s p95 budget.
+- `/describe?mode=read` (67–132 ms): transcribes when text present
+  (`"BEAUTY FOOD"`, `"HOME CHIC"` from the open-book stack); produces
+  natural-language no-text response otherwise (varies in phrasing —
+  no fixed string contract).
+- `/describe?mode=scene` (467–673 ms): atmospheric, image-specific. Bonus:
+  scene mode reads even more text than read mode on the book stack
+  (transcribes `"India Mahdavi"` in addition to BEAUTY FOOD / HOME CHIC).
+
+**Key learnings (full ADR in `decisions.md`)**:
+
+1. Qwen2-VL-7B treats the `system` role weakly when the user message
+   contains an image. System-prompt examples become attractors the
+   model echoes verbatim instead of grounding it in the actual image.
+2. Removing the structured prompt machinery (ROLE/OUTPUT FORMAT
+   headers, hard restrictions, example outputs) made all three modes
+   work better, not worse. Counterintuitive but reproducible.
+3. Per-mode `max_tokens` matters: navigate at 600 tokens went over
+   the 2s budget on the hallway image (2159 ms) because the model
+   wrote everything it possibly could; capped at 350 it stays under
+   600 ms on the same image.
+
+**Next**: Task 07 (frontend ↔ real backend integration test) or task 08
+(LoRA training scaffold). LoRA fine-tuning is the right place to refine
+output style further (e.g. tighter scene narration, cleaner navigate
+disambiguation between "what's there" and "how to move").
+
+---
+
+### 2026-05-05 (later) — Task 06 addendum: Qwen2-VL → Qwen3-VL-8B swap
+
+**Tried**: After locking iteration-8 prompts on Qwen2-VL-7B, A/B'd
+against Qwen3-VL-8B-Instruct on the same fixed image matrix. Same
+prompts, same `max_tokens` per mode, same vLLM 0.17.1+rocm700.
+Downloaded `Qwen/Qwen3-VL-8B-Instruct` to `/shared-docker/models/qwen3-vl-8b/`
+(17 GB), kept the existing 2-VL model on disk as a fallback. Restarted
+vLLM pointed at the 3-VL model under the same `--served-model-name qwen2-vl`
+alias so FastAPI didn't need to change.
+
+**Result**: 3-VL won decisively. The standout case is kitchen-navigate:
+- Qwen2-VL produced inventory-style output ("In front of you, there's a
+  man and a woman... To your left, there's a stove...").
+- Qwen3-VL produced actual navigation ("about 1 pace away... 1.5 paces
+  away, hip-height... red pot is eye-level, hot. The griddle is close to
+  your face — don't lean in.").
+
+Read mode also materially better — 3-VL transcribed all three visible
+spine titles (`BEAUTY FOOD`, `Home Chic`, `What on earth`) plus body
+text from the open page. 2-VL only got two spine titles and didn't
+attempt body text.
+
+Latencies: 3-VL is slower across the board.
+- navigate: 666–2729 ms (was 363–580 ms on 2-VL); kitchen-navigate at
+  2.7s is over the `<2s p95` budget but the content gain justifies it.
+- read: 81–321 ms (was 67–132 ms on 2-VL).
+- scene: 2257–2685 ms (was 467–671 ms); scene is now too verbose for
+  comfortable TTS narration but factually richer, including incidental
+  text transcription.
+
+**Locked in**: Qwen3-VL-8B-Instruct. Decision in `decisions.md`. The
+alias `qwen2-vl` is kept as the served-model-name for FastAPI contract
+stability — that name is now historical, not the model. Provision
+script now downloads 3-VL by default.
+
+**Next**: Task 07 (frontend ↔ real backend integration test). Watch for
+TTS latency over UDP from the demo location; with scene at ~2.5s and
+navigate at ~1–3s, response start time will dominate the perceived UX.
+
+

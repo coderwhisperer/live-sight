@@ -34,7 +34,7 @@ Logs live at `/shared-docker/logs/`.
 | FastAPI | host           | 8001 (public)          | running (host PID at `/shared-docker/logs/api.pid`, was 8918)| `/shared-docker/logs/api.log` + `/shared-docker/logs/api.stdout.log` |
 | Training| rocm container | —                      | idle (no nightly job yet)                                    | —                                                                  |
 
-vLLM args in use: `--served-model-name qwen2-vl --port 8000 --max-model-len 4096 --dtype bfloat16`,
+vLLM args in use: `vllm serve /shared-docker/models/qwen3-vl-8b --served-model-name qwen2-vl --port 8000 --max-model-len 4096 --dtype bfloat16`,
 with `HIP_VISIBLE_DEVICES=0` and `PYTORCH_ALLOC_CONF=expandable_segments:True`.
 
 FastAPI: uvicorn bound `0.0.0.0:8001`, venv at `backend/.venv/`, started by
@@ -48,9 +48,13 @@ will require either lower `--gpu-memory-utilization` or a smaller `--max-model-l
 
 ## Models on disk
 
-| Path                                  | Model                       | Size | Notes                                                  |
-|---------------------------------------|-----------------------------|------|--------------------------------------------------------|
-| `/shared-docker/models/qwen2-vl-7b/`  | Qwen/Qwen2-VL-7B-Instruct   | 16 G | Re-downloaded 2026-05-05 onto new droplet via provision.sh. |
+| Path                                  | Model                       | Size | Notes                                                                                       |
+|---------------------------------------|-----------------------------|------|---------------------------------------------------------------------------------------------|
+| `/shared-docker/models/qwen3-vl-8b/`  | Qwen/Qwen3-VL-8B-Instruct   | 17 G | **Active** — being served by vLLM. Downloaded 2026-05-05 during task 06 model swap.         |
+| `/shared-docker/models/qwen2-vl-7b/`  | Qwen/Qwen2-VL-7B-Instruct   | 16 G | Kept on disk as a fallback during the swap evaluation. Safe to delete once 3-VL is locked in. |
+
+vLLM serves the active model under the historical alias `qwen2-vl` so the
+FastAPI client doesn't need to change. Underlying weights are 3-VL.
 
 ## Adapters on disk
 

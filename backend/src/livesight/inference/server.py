@@ -13,7 +13,11 @@ from PIL import Image
 from pydantic import BaseModel
 
 from livesight.inference import vllm_client
-from livesight.inference.prompts import DESCRIBE_PROMPT, query_prompt
+from livesight.inference.prompts import (
+    max_tokens_for,
+    query_prompt,
+    user_prompt_for,
+)
 from livesight.shared.config import (
     ADAPTER_VERSION,
     DATA_DIR,
@@ -131,7 +135,11 @@ async def health():
 async def describe(req: DescribeRequest):
     started = time.perf_counter()
     resized = _resize_to_max_dim(req.image_b64)
-    description = await vllm_client.describe_image(resized, DESCRIBE_PROMPT)
+    description = await vllm_client.describe_image(
+        image_b64=resized,
+        user_prompt=user_prompt_for(req.mode),
+        max_tokens=max_tokens_for(req.mode),
+    )
     latency_ms = int((time.perf_counter() - started) * 1000)
     return DescribeResponse(description=description.strip(), latency_ms=latency_ms)
 
@@ -145,7 +153,10 @@ async def query(req: QueryRequest):
             content={"error": "recent_frames_b64 must contain at least one frame"},
         )
     resized = _resize_to_max_dim(req.recent_frames_b64[-1])
-    answer = await vllm_client.describe_image(resized, query_prompt(req.question))
+    answer = await vllm_client.describe_image(
+        image_b64=resized,
+        user_prompt=query_prompt(req.question),
+    )
     latency_ms = int((time.perf_counter() - started) * 1000)
     return QueryResponse(answer=answer.strip(), latency_ms=latency_ms)
 

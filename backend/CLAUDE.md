@@ -46,7 +46,7 @@ ceremony of nested tmux-inside-docker.
 - vLLM on ROCm prints `WARNING ... [gpt_oss_triton_kernels_moe.py:56]
   Using legacy triton_kernels on ROCm` at every startup. It fires at
   *module import* in a fused-MoE kernel file, so it's harmless for our
-  dense model (Qwen2-VL-7B) — the code path is never executed. If we
+  dense model (Qwen3-VL-8B) — the code path is never executed. If we
   ever swap in an MoE model (Mixtral, Qwen2-MoE, DeepSeek), re-evaluate:
   the legacy path may be slower or differ in numerics. A sibling
   `ERROR Failed to import Triton kernels` from the same file is **not**

@@ -8,7 +8,7 @@
 3. Frontend POSTs to `/describe` on the AMD droplet backend.
 4. FastAPI handler forwards the image to local vLLM via the OpenAI-compatible
    chat completions API.
-5. vLLM processes through Qwen2-VL-7B (with the user's LoRA adapter applied)
+5. vLLM processes through Qwen3-VL-8B (with the user's LoRA adapter applied)
    and returns text.
 6. Backend returns `{ description, latency_ms }` to frontend.
 7. Frontend speaks the description via TTS.
@@ -20,8 +20,10 @@
 
 - **vLLM server**: port 8000. Runs **inside Docker container `rocm`**,
   started detached with `docker exec -d`, log at `/shared-docker/logs/vllm.log`.
-  Loads Qwen2-VL-7B in BF16 with the active LoRA adapter. Port 8000 is
-  internal (DOCKER-USER iptables DROP rule blocks external access).
+  Loads Qwen3-VL-8B-Instruct in BF16 with the active LoRA adapter. Served
+  under the alias `qwen2-vl` (historical name, kept for FastAPI contract
+  stability — see ADR in `docs/wiki/decisions.md`). Port 8000 is internal
+  (DOCKER-USER iptables DROP rule blocks external access).
 - **FastAPI server**: port 8001. Runs **on the host** (not in the container),
   started with `nohup`, PID at `/shared-docker/logs/api.pid`. Stateless
   except for the interaction log file path. Public surface for the HF Space.

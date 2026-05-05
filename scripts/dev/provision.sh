@@ -31,10 +31,14 @@ set -euo pipefail
 REPO_DIR=/shared-docker/live-sight
 MODELS_DIR=/shared-docker/models
 LOGS_DIR=/shared-docker/logs
-MODEL_REPO=Qwen/Qwen2-VL-7B-Instruct
-MODEL_DIR=${MODELS_DIR}/qwen2-vl-7b
+MODEL_REPO=Qwen/Qwen3-VL-8B-Instruct
+MODEL_DIR=${MODELS_DIR}/qwen3-vl-8b
 CONTAINER=rocm
 VLLM_PORT=8000
+# vLLM is served under the "qwen2-vl" alias for backwards-compatible FastAPI
+# wiring. The alias is decoupled from the underlying weights — see
+# decisions.md ADR for the model swap rationale.
+SERVED_MODEL_NAME=qwen2-vl
 
 step() { printf "\n=== %s ===\n" "$*"; }
 
@@ -161,17 +165,17 @@ else
     echo "vllm process exists in container but not yet responding — waiting"
   else
     echo "starting vLLM detached..."
-    docker exec -d "${CONTAINER}" bash -c '
+    docker exec -d "${CONTAINER}" bash -c "
       HIP_VISIBLE_DEVICES=0 \
       PYTORCH_ALLOC_CONF=expandable_segments:True \
-      nohup vllm serve /shared-docker/models/qwen2-vl-7b \
-        --served-model-name qwen2-vl \
+      nohup vllm serve ${MODEL_DIR} \
+        --served-model-name ${SERVED_MODEL_NAME} \
         --port 8000 \
         --max-model-len 4096 \
         --dtype bfloat16 \
         > /shared-docker/logs/vllm.log 2>&1 &
       disown
-    '
+    "
   fi
   echo "waiting for vLLM (up to 5 minutes)..."
   for _ in $(seq 1 60); do

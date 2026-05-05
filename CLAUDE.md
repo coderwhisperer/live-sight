@@ -45,7 +45,7 @@ Submission deadline: May 9.
 ```
 [ AMD MI300X host droplet ]
     ├── Docker container `rocm` (vLLM image, ROCm 7)
-    │   ├── vLLM serving Qwen2-VL-7B (port 8000, host-internal only)
+    │   ├── vLLM serving Qwen3-VL-8B (port 8000, host-internal only)
     │   └── Nightly LoRA training (PyTorch + peft)
     └── FastAPI backend on host (port 8001, public)
                     │
@@ -63,7 +63,12 @@ Why every major decision (so you don't second-guess them):
 
 - **AMD MI300X**: 192GB HBM3 lets us keep vision + reasoning + STT + TTS +
   user LoRA all resident. This is the hackathon's hardware story.
-- **Qwen2-VL-7B**: well-supported on ROCm, fast, multilingual.
+- **Qwen3-VL-8B-Instruct**: well-supported on ROCm with vLLM 0.17.1
+  (`Qwen3VLForConditionalGeneration`), multilingual, materially better
+  spatial reasoning and OCR than Qwen2-VL-7B (we A/B'd them in task 06,
+  see `docs/wiki/decisions.md`). Served under the alias `qwen2-vl`
+  for FastAPI contract stability — that name is historical, not the
+  underlying model.
 - **Python backend / TypeScript frontend**: vLLM and PyTorch are Python.
   Frontend is React + Vite + Tailwind.
 - **LoRA personalization, not RAG**: weight-level personalization is more
