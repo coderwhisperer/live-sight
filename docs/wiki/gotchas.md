@@ -58,6 +58,50 @@ curl http://localhost:8000/v1/models
 droplet, which is where `docker-proxy` is listening. The DOCKER-USER
 DROP rule sees in-iface=`lo` (not `eth0`) and doesn't fire.
 
+## bash — `set -euo pipefail` + `find` in a command substitution silently kills the script
+
+**Cause**: A line like
+```bash
+shard_count=$(find "${DIR}" -maxdepth 1 -name '*.foo' 2>/dev/null | wc -l)
+```
+*looks* safe but exits the whole script when `${DIR}` doesn't exist:
+- `find` exits 1 (no such directory)
+- `pipefail` makes the pipeline `find | wc -l` exit 1
+- the simple command `var=$(...)` inherits the substitution's exit status (1)
+- `set -e` kills the script
+- `2>/dev/null` swallowed find's stderr, so **nothing** reaches the terminal
+
+This bit `provision.sh` step 4 twice on a fresh droplet — the script
+appeared to succeed but actually exited right after printing the
+`=== ensuring model at … ===` step header, before the model download ever
+ran. Reproduces under bash 5.2 with `inherit_errexit` off.
+
+**Fix**: ensure the directory exists before `find`:
+```bash
+mkdir -p "${DIR}"
+shard_count=$(find "${DIR}" -maxdepth 1 -name '*.foo' | wc -l)
+```
+Bonus: drop the `2>/dev/null`. The whole reason it was masking errors is
+the same reason it's a footgun. If find can fail for reasons other than
+missing-dir, handle them explicitly.
+
+**Smell to watch for**: any `$(... 2>/dev/null | ...)` under `set -euo
+pipefail`. The redirect hides exactly the diagnostics you'd need.
+
+## AMD ROCm image — `apt-get upgrade` during active work breaks Docker / kernel state
+
+**Cause**: The AMD ROCm image pins specific kernel modules, ROCm runtime,
+and Docker components together. A blanket `apt-get upgrade` can pull in
+new kernel headers / packages that don't match the running kernel, leave
+Docker in a broken state, or update userspace that the ROCm container
+images expect at a fixed version. The previous droplet (`129.212.179.191`)
+had to be destroyed and rebuilt after this happened.
+
+**Fix**: don't `apt-get upgrade` on a working droplet. If you need a
+specific package, install it targeted (`apt-get install -y <pkg>`).
+Treat blanket upgrades as a deliberate "I'm about to redeploy this droplet
+anyway" action, not routine maintenance.
+
 ## vLLM — KV cache fills ~91% of GPU memory by default
 
 **Cause**: vLLM defaults `--gpu-memory-utilization` to 0.9. With
