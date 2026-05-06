@@ -35,3 +35,4 @@ Thumbs.db
 # tree but out of git. Project-relevant utilities go under scripts/dev/.
 /ocr-test.sh
 /*.local.sh
+.git-credentials
