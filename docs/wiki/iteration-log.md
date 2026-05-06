@@ -203,3 +203,65 @@ require a code edit.
 **Next**: Task 08 (LoRA training scaffold) — interaction log is now
 producing the data it needs.
 
+---
+
+### 2026-05-06 — Task 09: adapter hot-swap orchestrator
+
+**Tried**: Wired vLLM + FastAPI to serve a LoRA adapter at runtime and
+swap between adapter and base without restarting vLLM. Steps:
+
+1. Restarted vLLM with `--enable-lora --max-loras 2 --max-lora-rank 16`.
+   Initial test failed: `/v1/load_lora_adapter` returned 404 even though
+   the flag was set. Fix: also set `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`
+   in the env. Persisted in both `provision.sh` and `train-lora.sh`.
+2. Loaded v0 via `POST /v1/load_lora_adapter` with name `livesight-v0`.
+   `/v1/models` then lists both `qwen2-vl` and `livesight-v0`.
+3. Added `AdapterState` singleton (`active`, `version`) behind a `Lock`.
+   `vllm_client.describe_image` reads `get_active().active` per call.
+   `/health` reads `get_active().version`.
+4. Added `POST /admin/swap-adapter` endpoint. null `adapter_path` →
+   skip vLLM call (swap to base). Idempotent for already-loaded
+   adapters (vLLM "already exists" → treat as success).
+5. Wrote `backend/scripts/swap-adapter.sh` wrapper. `--base` for
+   swap-back, positional for swap-forward.
+
+**Result**: infrastructure complete and verified end-to-end.
+
+LoRA influence verified two ways at greedy decode (temperature=0.0,
+removes sampling-variance confound):
+
+- **Training-set keyboard image (row 0 in JSONL, mode=scene)**:
+  `livesight-v0` reproduces multiple verbatim phrases from the trained
+  target — `"silver or white, stylized font"`, `"slightly blurry and
+  tilted, suggesting it was taken handheld"`, and the closing line
+  `"with the brand name "TYLER" being a prominent feature"`. Base does
+  *not* produce any of these phrases — its output uses different
+  framings entirely (`"shallow depth of field"`, `"casting shadows"`,
+  no closing summary). Unambiguous evidence the adapter is being applied.
+- **New hallway image (mode=navigate, not in training set)**: outputs
+  differ between v0 and base in specific phrasings (`"glass walls on
+  both sides and a ceiling with recessed lights"` vs `"smooth floor
+  stretches 10 paces ahead to a glass wall"`). Subtle but real.
+
+**Latency cost**: ~30-50% adapter overhead — `/describe` warm latency
+~800ms with adapter vs ~540ms base on hallway navigate. Within demo
+budget; not a concern.
+
+**Known v0 limitation**: 9-example training produces "almost-but-not-
+quite memorization" — the adapter recalls many trained phrases but
+doesn't perfectly reproduce sentences (greedy v0 says "wireless
+keyboard / lower-left" where the trained target said "computer keyboard
+/ upper-left"). Likely a 9-example scale problem rather than a precision
+issue; will resolve with task 11's larger dataset. Train/serve dtype
+investigation (we train fp32 LoRA, save bf16) deferred to task 11 —
+won't matter once the dataset is bigger.
+
+**Demo asset**: the training-image side-by-side comparison
+(trained target ↔ v0 output ↔ base output) is a real
+"the model learned from this user" demonstration. Unedited verbatim
+phrase reproduction makes the LoRA influence visible without needing
+narration.
+
+**Next**: Task 10 or task 11. Hot-swap is ready for whichever comes next.
+
+

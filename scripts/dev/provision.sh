@@ -172,11 +172,15 @@ else
     docker exec -d "${CONTAINER}" bash -c "
       HIP_VISIBLE_DEVICES=0 \
       PYTORCH_ALLOC_CONF=expandable_segments:True \
+      VLLM_ALLOW_RUNTIME_LORA_UPDATING=True \
       nohup vllm serve ${MODEL_DIR} \
         --served-model-name ${SERVED_MODEL_NAME} \
         --port 8000 \
         --max-model-len 4096 \
         --dtype bfloat16 \
+        --enable-lora \
+        --max-loras 2 \
+        --max-lora-rank 16 \
         > /shared-docker/logs/vllm.log 2>&1 &
       disown
     "

@@ -248,3 +248,56 @@ import path. If the prompts change in `prompts.py`, they must change in
 `train_lora.py`'s `USER_PROMPTS` dict too — a small duplication we accept
 because the alternative (a shared module the container has to install)
 adds more weight than it saves.
+
+## 2026-05-06 — Adapter hot-swap via vLLM's load_lora_adapter, not vLLM restart
+
+**Decision**: Switching adapters at runtime goes through vLLM's
+`POST /v1/load_lora_adapter` endpoint plus a small FastAPI-side state
+update, not by restarting vLLM. vLLM stays up the whole time. The
+"active" adapter is tracked in a `AdapterState` singleton in FastAPI;
+inference calls and `/health` both read from it. Swapping is a
+near-instant FastAPI POST → vLLM POST → state update — no model reload.
+
+**Why not restart vLLM per swap**:
+- Cold-start is ~50s on MI300X (model weights + CUDA graphs + KV
+  cache sizing). For a "watch the swap happen live" demo, 50s of
+  downtime per swap is dead air.
+- Restarting also nukes the KV cache, so the next call after restart
+  pays a full prefill cost on the cached attention state.
+- vLLM's runtime LoRA API is exactly the right tool — it side-loads
+  adapter weights into the existing engine and routes per request by
+  `model` name.
+
+**Why singleton state instead of stateless routing**:
+The frontend doesn't know or care which adapter is active — `/describe`
+takes `(image_b64, mode)`, no model selector. So FastAPI needs *somewhere*
+to remember which adapter to forward to. A process-wide singleton is the
+simplest "somewhere." Trade-off: state lost on FastAPI restart (defaults
+back to `livesight-v0` per the module-level constant). For v0 demo that's
+fine; if it matters, persist to a file.
+
+**Why `--max-loras 2`**: spec said at least 1, set to 2 so we can
+preload v1 alongside v0 for the swap demo (preload + then swap is
+visually faster than load-on-swap). Can bump to 3+ later if we run
+A/B tests of adapter variants.
+
+**Gotcha — `--enable-lora` is necessary but not sufficient for runtime
+loading on vLLM 0.17.1**: also need `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`
+in the env. Without it, `/v1/load_lora_adapter` 404s even though
+`--enable-lora` is set. Discovered during task 09 — flag-only startup
+fails the test, env+flag passes. Both `provision.sh` and `train-lora.sh`
+now set the env var when starting vLLM.
+
+**Alternatives considered**:
+- Restart vLLM with `--lora-modules name=path` for each adapter
+  (rejected: requires restart per swap, 50s downtime, no live-swap demo).
+- Merge adapter into base weights and serve as a regular model
+  (rejected: per-swap merge takes minutes; loses dynamic-swap UX).
+- Multiple vLLM instances on different ports, route by adapter
+  (rejected: 192GB GPU, can't host 2× 8B models concurrently;
+  even if we could, FastAPI routing complexity isn't worth it for v0).
+
+**Hot-swap in-flight requests**: a `/describe` already running when a
+swap happens uses whichever adapter was active at the time vLLM accepted
+the request. We don't sync the swap with in-flight requests (would need
+a request-counter or a write-lock). For single-user demo, fine.

@@ -1,14 +1,21 @@
 import httpx
 
-from livesight.shared.config import VLLM_MODEL_NAME, VLLM_TIMEOUT_S, VLLM_URL
+from livesight.inference.adapter_state import get_active
+from livesight.shared.config import VLLM_TIMEOUT_S, VLLM_URL
 
 
 async def describe_image(
     image_b64: str, user_prompt: str, max_tokens: int = 600
 ) -> str:
-    """Call vLLM with image + user prompt, return assistant text."""
+    """Call vLLM with image + user prompt, return assistant text.
+
+    Routes to whichever model/adapter `adapter_state.get_active()` returns —
+    either the base alias `qwen2-vl` or a loaded LoRA name like
+    `livesight-v0`. The `/admin/swap-adapter` endpoint is the only
+    mechanism that changes the routing target.
+    """
     payload = {
-        "model": VLLM_MODEL_NAME,
+        "model": get_active().active,
         "messages": [
             {
                 "role": "user",

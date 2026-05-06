@@ -128,6 +128,38 @@ line. Two safer patterns:
 The exposure window is short (only while the docker exec process runs)
 but real, especially on a multi-tenant host.
 
+## vLLM — `--enable-lora` is necessary but not sufficient for runtime adapter loading
+
+**Cause** (hit 2026-05-06 during task 09): vLLM 0.17.1+rocm700 starts
+cleanly with `--enable-lora --max-loras 2 --max-lora-rank 16`, advertises
+"LoRA enabled" in its log, accepts adapter requests via the existing
+`model` field on chat completions — but `POST /v1/load_lora_adapter`
+returns **HTTP 404**. The endpoint isn't registered. `/openapi.json`
+shows only `/load` (a load-progress check, not load-adapter).
+
+The flag enables the LoRA *runtime* but not the *runtime-loading API*.
+Those are separate switches in this version.
+
+**Fix**: also set `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True` in the env
+when starting vLLM:
+```bash
+docker exec -d rocm bash -c "
+  VLLM_ALLOW_RUNTIME_LORA_UPDATING=True \
+  ...
+  vllm serve ... --enable-lora --max-loras 2 --max-lora-rank 16 ..."
+```
+After that, `/v1/load_lora_adapter` and `/v1/unload_lora_adapter` show
+up in `/openapi.json` and behave as documented.
+
+Both `scripts/dev/provision.sh` and `backend/scripts/train-lora.sh`
+already set the env var, so fresh provisions work out of the box. If
+you ever start vLLM by hand without this script, remember the env var.
+
+**Don't confuse with**: `--no-enable-lora` (the negation form of the
+flag) — that's a different thing. Or with passing adapters via
+`--lora-modules name=path` at startup, which works without the env var
+because adapters are loaded at engine init, not via the runtime API.
+
 ## AMD ROCm image — `apt-get upgrade` during active work breaks Docker / kernel state
 
 **Cause**: The AMD ROCm image pins specific kernel modules, ROCm runtime,

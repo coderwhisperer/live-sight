@@ -39,8 +39,16 @@ Logs live at `/shared-docker/logs/`.
 | FastAPI | host           | 8001 (public)          | running (host PID at `/shared-docker/logs/api.pid`, was 286369)| `/shared-docker/logs/api.log` + `/shared-docker/logs/api.stdout.log` |
 | Training| rocm container | —                      | idle (no nightly job yet)                                    | —                                                                  |
 
-vLLM args in use: `vllm serve /shared-docker/models/qwen3-vl-8b --served-model-name qwen2-vl --port 8000 --max-model-len 4096 --dtype bfloat16`,
-with `HIP_VISIBLE_DEVICES=0` and `PYTORCH_ALLOC_CONF=expandable_segments:True`.
+vLLM args in use: `vllm serve /shared-docker/models/qwen3-vl-8b --served-model-name qwen2-vl --port 8000 --max-model-len 4096 --dtype bfloat16 --enable-lora --max-loras 2 --max-lora-rank 16`,
+with env `HIP_VISIBLE_DEVICES=0`, `PYTORCH_ALLOC_CONF=expandable_segments:True`,
+and **`VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`** (the env var is the second
+half of the LoRA-loading switch — `--enable-lora` alone leaves the load
+endpoint 404; see gotchas.md).
+
+`/v1/models` lists both the base alias `qwen2-vl` and any loaded adapters
+(currently `livesight-v0`). FastAPI routes per-request by reading the
+active adapter name from `AdapterState`; `/health` reports the live
+state, not a hardcoded label.
 
 FastAPI: uvicorn bound `0.0.0.0:8001`, venv at `backend/.venv/`, started by
 `backend/scripts/start-api.sh` (idempotent — won't double-start). Stop with

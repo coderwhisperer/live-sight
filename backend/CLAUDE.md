@@ -148,3 +148,49 @@ Where things land:
 - adapters → `/shared-docker/adapters/<name>/` (only adapter files)
 - trainer scratch (logs, intermediate checkpoints if save_strategy is on)
   → `/shared-docker/training-runs/<name>-checkpoints/` (sibling tree)
+
+## Adapter hot-swap
+
+vLLM serves the base model AND any number of LoRA adapters under distinct
+names. Routing is decided per request by the `model` field on the chat
+completion call. FastAPI tracks which adapter is "active" via a small
+singleton.
+
+**vLLM startup flags** (set in `provision.sh` and `train-lora.sh`):
+- `--enable-lora` — top-level switch
+- `--max-loras 2` — adapters loaded simultaneously; 2 lets us preload
+  v1 alongside v0 for swap demos
+- `--max-lora-rank 16` — must be ≥ our adapter's rank (we train at 16)
+- `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True` (env, not flag) — exposes
+  `POST /v1/load_lora_adapter`. **Necessary in addition to `--enable-lora`**;
+  without it the load endpoint 404s. Discovered the hard way during task
+  09 — see `docs/wiki/gotchas.md`.
+
+**`AdapterState`** (`backend/src/livesight/inference/adapter_state.py`):
+A frozen dataclass `(active, version)` behind a `Lock`. `active` is the
+vLLM model name we send (`"qwen2-vl"` or `"livesight-v0"` etc.);
+`version` is the human label `/health` reports (`"base"`, `"v0"`, …).
+Read on every inference call, written only by the swap endpoint.
+
+**`/admin/swap-adapter` contract** (POST, JSON body):
+```
+{ adapter_path: string|null, adapter_name: string, version: string }
+```
+- `adapter_path != null`: POST to vLLM's `/v1/load_lora_adapter` with
+  `(name, path)`. vLLM returning "already loaded" is treated as a no-op
+  (idempotent). Then `set_active(adapter_name, version)`.
+- `adapter_path == null`: skip the vLLM call, just update `AdapterState`.
+  Used to swap back to the base model.
+
+Returns `{ active, version, loaded_into_vllm: bool }`. The endpoint is
+*not* authenticated — for v0 we accept that anyone who can reach 8001
+can swap. Tighten before public submission.
+
+**`backend/scripts/swap-adapter.sh`**: thin curl wrapper.
+- `swap-adapter.sh /path/to/adapter` — load by basename
+- `swap-adapter.sh /path adapter-name version-label` — explicit
+- `swap-adapter.sh --base` — route back to base, no vLLM call
+
+Race condition note: a `/describe` in-flight when a swap happens uses
+whichever adapter was active at request start. Acceptable for v0
+(single user, demo context).

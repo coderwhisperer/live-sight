@@ -1,0 +1,283 @@
+# Task 09 — Adapter Hot-Swap Orchestrator
+
+## Goal
+
+Get vLLM serving the LoRA adapter, with a clean swap mechanism so we can
+load/unload/switch adapters at runtime. The current vLLM serves base
+Qwen3-VL only; the v0 adapter sits on disk doing nothing. After this
+task, vLLM serves base + adapter, FastAPI routes to the adapter, and we
+have a script to swap adapter versions.
+
+## Why this matters
+
+The 90s demo's hero beat is "the system learned Jamshed in a week —
+watch the swap happen live." That requires:
+
+1. vLLM running with `--enable-lora` so it can load adapters
+2. The adapter exposed under a routable name
+3. FastAPI directing requests to that adapter
+4. A swap script that loads a different adapter without restarting vLLM
+5. The /health endpoint reflecting which adapter is active
+
+Without task 09, the v0 adapter and the v1 adapter we'll train are both
+just files on disk that influence nothing.
+
+## Acceptance criteria
+
+1. vLLM running with `--enable-lora` flag, base model serving as before
+2. v0 adapter loaded into vLLM under a routable name (e.g. `livesight-v0`)
+3. FastAPI's `/describe` calls vLLM with the adapter name, not the base
+   model name
+4. `/health` reports the currently active adapter version (e.g.
+   `"adapter_version": "v0"` should reflect reality, not be hardcoded)
+5. A `backend/scripts/swap-adapter.sh` script that takes an adapter
+   path, loads it into vLLM, updates FastAPI's active adapter, and
+   reports success
+6. End-to-end test: tap describe on phone with v0 adapter active, get a
+   response. Verify the adapter is actually being applied (not just the
+   base model).
+
+## Steps
+
+### 0. Verify state
+
+```bash
+docker exec rocm pgrep -af "vllm serve" | head -1
+curl -sf http://localhost:8001/health
+ls /shared-docker/adapters/v0/
+```
+
+All should be healthy. Note current vLLM PID and adapter contents.
+
+### 1. Restart vLLM with --enable-lora
+
+vLLM needs to be started with LoRA support enabled. This requires a
+restart — the flag can't be added to a running instance.
+
+Update `scripts/dev/provision.sh` to include LoRA flags by default:
+
+```bash
+nohup vllm serve ${MODEL_DIR} \
+  --served-model-name ${SERVED_MODEL_NAME} \
+  --port 8000 \
+  --max-model-len 4096 \
+  --dtype bfloat16 \
+  --enable-lora \
+  --max-loras 2 \
+  --max-lora-rank 16 \
+  > /shared-docker/logs/vllm.log 2>&1 &
+```
+
+Notes on the new flags:
+- `--enable-lora`: top-level switch, required
+- `--max-loras 2`: max number of adapters loaded simultaneously. We need
+  at least 1; setting to 2 lets us preload v1 alongside v0 for swap
+  demos
+- `--max-lora-rank 16`: must be ≥ our adapter's rank. Ours is 16.
+
+Also update `backend/scripts/train-lora.sh` since it restarts vLLM after
+training — needs the same flags.
+
+Manual restart for this session:
+```bash
+docker exec rocm pkill -f "vllm serve"
+sleep 5
+# Start with new flags via the updated provision.sh path or manual command
+```
+
+Wait for vLLM ready (~30-60s on warm model). Verify:
+```bash
+curl -s http://localhost:8000/v1/models
+# Should still list "qwen2-vl" as before
+```
+
+### 2. Load v0 adapter into vLLM
+
+vLLM exposes a `/v1/load_lora_adapter` endpoint when `--enable-lora` is
+set. Use it to register the v0 adapter:
+
+```bash
+curl -X POST http://localhost:8000/v1/load_lora_adapter \
+  -H "Content-Type: application/json" \
+  -d '{
+    "lora_name": "livesight-v0",
+    "lora_path": "/shared-docker/adapters/v0"
+  }'
+```
+
+Verify it loaded:
+```bash
+curl -s http://localhost:8000/v1/models | python3 -m json.tool
+# Should now list both "qwen2-vl" (base) and "livesight-v0" (adapter)
+```
+
+If load fails, check vLLM logs for the actual error. Common issues:
+- Adapter rank > max_lora_rank: adjust the flag
+- Adapter format mismatch: check adapter_config.json against vLLM's expectations
+- Module name mismatch: vLLM may need different target_modules names
+
+### 3. Update FastAPI to route to the adapter
+
+Currently `backend/src/livesight/inference/vllm_client.py` calls vLLM
+with `model="qwen2-vl"` (the base alias). Change it to use the adapter
+name when one is active.
+
+Approach: introduce a small `AdapterState` singleton in
+`backend/src/livesight/inference/adapter_state.py`:
+
+```python
+from dataclasses import dataclass
+from threading import Lock
+
+@dataclass
+class AdapterState:
+    active: str  # "qwen2-vl" or "livesight-v0" or "livesight-v1" etc.
+    version: str  # "v0", "v1", or "base"
+
+# Global singleton with lock for thread safety
+_state = AdapterState(active="livesight-v0", version="v0")
+_lock = Lock()
+
+def get_active() -> AdapterState:
+    with _lock:
+        return AdapterState(active=_state.active, version=_state.version)
+
+def set_active(model_name: str, version: str) -> None:
+    with _lock:
+        _state.active = model_name
+        _state.version = version
+```
+
+Update `vllm_client.py`'s describe call to use `get_active().active` as
+the model name instead of the hardcoded "qwen2-vl".
+
+Update `server.py`'s `/health` endpoint to report the live adapter
+version from `get_active().version` instead of the hardcoded "v0".
+
+### 4. Add /admin/swap-adapter endpoint to FastAPI
+
+Internal endpoint to load a new adapter and switch routing:
+
+```python
+@app.post("/admin/swap-adapter")
+async def swap_adapter(req: SwapAdapterRequest) -> dict:
+    # 1. POST /v1/load_lora_adapter on vLLM with the new path
+    # 2. Update AdapterState to point at the new lora_name
+    # 3. (Optional) POST /v1/unload_lora_adapter for the old one
+    # 4. Return the new active state
+```
+
+Add input validation (path exists, adapter_config.json present).
+
+Don't expose this endpoint publicly — bind it to localhost or add a
+simple shared-secret header. For demo: localhost only is fine.
+
+### 5. Write the swap-adapter.sh wrapper
+
+`backend/scripts/swap-adapter.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ADAPTER_PATH="${1:-}"
+ADAPTER_NAME="${2:-$(basename "$ADAPTER_PATH")}"
+VERSION="${3:-$(basename "$ADAPTER_PATH")}"
+
+if [[ -z "$ADAPTER_PATH" ]]; then
+  echo "usage: swap-adapter.sh <adapter-path> [name] [version]"
+  echo "example: swap-adapter.sh /shared-docker/adapters/v1 livesight-v1 v1"
+  exit 1
+fi
+
+curl -X POST http://localhost:8001/admin/swap-adapter \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"adapter_path\": \"$ADAPTER_PATH\",
+    \"adapter_name\": \"$ADAPTER_NAME\",
+    \"version\": \"$VERSION\"
+  }"
+```
+
+### 6. End-to-end test
+
+After all the above:
+
+1. Verify `/health` reports `"adapter_version": "v0"`
+2. Tap describe on phone for one of the original 9 training images
+   (find one in `/shared-docker/data/interactions/2026-05-06.jsonl`,
+   download it, send it from phone). Compare response to the JSONL —
+   should be very similar (model memorized those examples).
+3. Tap describe on a *new* image not in the training set. Response
+   should be sensible (LoRA on tiny data shouldn't break the model).
+4. Manually trigger swap back to base:
+   ```bash
+   curl -X POST http://localhost:8001/admin/swap-adapter \
+     -H "Content-Type: application/json" \
+     -d '{"adapter_path": null, "adapter_name": "qwen2-vl", "version": "base"}'
+   ```
+   Tap the same image on phone. Response should now be the base model
+   output (different from adapter output).
+
+### 7. Document
+
+`backend/CLAUDE.md`: add a "Hot-swap" section covering the adapter
+state pattern, the swap endpoint, and the script.
+
+`docs/wiki/setup-state.md`: update the runtime services section to note
+vLLM now runs with `--enable-lora`.
+
+`docs/wiki/decisions.md`: ADR for the hot-swap design — singleton state
+pattern, why we use vLLM's load_lora_adapter API instead of restarting
+vLLM, max_loras=2 reasoning.
+
+`docs/wiki/iteration-log.md`: brief entry on task 09 results.
+
+### 8. Commit and push
+
+```bash
+git add -A
+git commit -m "feat(serving): adapter hot-swap (task 09)"
+git push origin develop
+```
+
+## When you finish
+
+Stop and report:
+- vLLM restarted cleanly with --enable-lora
+- v0 adapter loaded successfully (any errors during load?)
+- /health reports correct adapter version
+- /describe with v0 active produced a response
+- Swap to base model worked
+- Comparison: did the v0 vs base responses differ on a new image? (Even
+  subtle differences indicate the LoRA is being applied.)
+- Any issues with vLLM's LoRA support on ROCm
+
+Don't proceed to task 10 or 11. Hot-swap is the deliverable.
+
+## Things that might go wrong
+
+1. **vLLM 0.17.1 + ROCm + LoRA: untested combination on this droplet.**
+   Worth flagging that vLLM's LoRA serving has been less mature on
+   ROCm than CUDA. If `--enable-lora` causes vLLM to fail to start,
+   check the log for AMD-specific issues. May need to upgrade vLLM
+   or accept a fallback path (load adapter into base model and serve
+   merged weights instead of dynamic LoRA — slower swap, simpler).
+
+2. **Adapter format compatibility.** vLLM expects PEFT-format adapters,
+   which is what we produce. But specific config fields can mismatch.
+   If load_lora_adapter returns a non-200, the error message usually
+   says what's wrong.
+
+3. **Race condition on swap.** If a describe request is in-flight when
+   we swap, the response uses whichever adapter was active at request
+   start. This is acceptable for v0 — single user, demo context.
+
+4. **Disk vs network adapter loading.** vLLM loads the adapter from
+   the path we give it. The path must be readable from inside the
+   rocm container. /shared-docker/* is bind-mounted, so it's fine.
+
+5. **The "adapter is doing something" question.** With v0 trained on 9
+   examples, the LoRA's influence may be subtle on new images. Don't
+   over-interpret small response differences. Task 11 with more data
+   will produce more visible behavior change.

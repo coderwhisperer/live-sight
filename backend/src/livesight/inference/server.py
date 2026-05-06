@@ -13,18 +13,17 @@ from PIL import Image
 from pydantic import BaseModel
 
 from livesight.inference import vllm_client
+from livesight.inference.adapter_state import get_active, set_active
 from livesight.inference.prompts import (
     max_tokens_for,
     query_prompt,
     user_prompt_for,
 )
 from livesight.shared.config import (
-    ADAPTER_VERSION,
     DATA_DIR,
     JPEG_QUALITY,
     MAX_IMAGE_DIM,
     VLLM_HEALTH_TIMEOUT_S,
-    VLLM_MODEL_NAME,
     VLLM_URL,
 )
 from livesight.shared.logging import configure_logging
@@ -96,6 +95,19 @@ class HealthResponse(BaseModel):
     adapter_version: str
 
 
+class SwapAdapterRequest(BaseModel):
+    # adapter_path null + adapter_name="qwen2-vl" → swap back to base model.
+    adapter_path: str | None = None
+    adapter_name: str
+    version: str
+
+
+class SwapAdapterResponse(BaseModel):
+    active: str
+    version: str
+    loaded_into_vllm: bool
+
+
 def _resize_to_max_dim(image_b64: str) -> str:
     raw = base64.b64decode(image_b64)
     img = Image.open(io.BytesIO(raw))
@@ -113,6 +125,7 @@ def _resize_to_max_dim(image_b64: str) -> str:
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
+    state = get_active()
     try:
         async with httpx.AsyncClient(timeout=VLLM_HEALTH_TIMEOUT_S) as client:
             resp = await client.get(f"{VLLM_URL}/v1/models")
@@ -122,12 +135,60 @@ async def health():
             status_code=503,
             content={
                 "status": "vllm_unreachable",
-                "model": VLLM_MODEL_NAME,
-                "adapter_version": ADAPTER_VERSION,
+                "model": state.active,
+                "adapter_version": state.version,
             },
         )
     return HealthResponse(
-        status="ok", model=VLLM_MODEL_NAME, adapter_version=ADAPTER_VERSION
+        status="ok", model=state.active, adapter_version=state.version
+    )
+
+
+@app.post("/admin/swap-adapter", response_model=SwapAdapterResponse)
+async def swap_adapter(req: SwapAdapterRequest):
+    """Load a LoRA adapter into vLLM and route /describe to it.
+
+    Three flows:
+      1. New adapter: req.adapter_path is set. POST /v1/load_lora_adapter,
+         then update AdapterState.
+      2. Already-loaded adapter: req.adapter_path is set but vLLM already
+         has this adapter_name. The load call returns a "already exists"
+         message; we still update AdapterState. Idempotent.
+      3. Swap back to base: req.adapter_path is null and req.adapter_name
+         is the base alias. Just update AdapterState — no vLLM call.
+
+    Localhost-only is enforced by binding uvicorn to 0.0.0.0:8001 with
+    no auth in front; for v0 we accept that anyone who can reach 8001
+    can swap. Tighten before public submission (auth or bind to lo).
+    """
+    loaded = False
+    if req.adapter_path is not None:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{VLLM_URL}/v1/load_lora_adapter",
+                json={
+                    "lora_name": req.adapter_name,
+                    "lora_path": req.adapter_path,
+                },
+            )
+            if resp.status_code == 200:
+                loaded = True
+            elif resp.status_code == 400 and "already" in resp.text.lower():
+                # vLLM returns 400 if the name is already loaded. Treat
+                # that as a no-op so swap-adapter is idempotent.
+                loaded = True
+            else:
+                return JSONResponse(
+                    status_code=502,
+                    content={
+                        "error": "vllm_load_failed",
+                        "vllm_status": resp.status_code,
+                        "vllm_body": resp.text[:500],
+                    },
+                )
+    state = set_active(active=req.adapter_name, version=req.version)
+    return SwapAdapterResponse(
+        active=state.active, version=state.version, loaded_into_vllm=loaded
     )
 
 

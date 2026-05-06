@@ -83,11 +83,15 @@ echo "=== restarting vLLM ==="
 docker exec -d rocm bash -c "
   HIP_VISIBLE_DEVICES=0 \\
   PYTORCH_ALLOC_CONF=expandable_segments:True \\
+  VLLM_ALLOW_RUNTIME_LORA_UPDATING=True \\
   nohup vllm serve ${BASE_MODEL} \\
     --served-model-name qwen2-vl \\
     --port 8000 \\
     --max-model-len 4096 \\
     --dtype bfloat16 \\
+    --enable-lora \\
+    --max-loras 2 \\
+    --max-lora-rank 16 \\
     > /shared-docker/logs/vllm.log 2>&1 &
   disown
 "
