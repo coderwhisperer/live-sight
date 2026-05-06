@@ -264,4 +264,50 @@ narration.
 
 **Next**: Task 10 or task 11. Hot-swap is ready for whichever comes next.
 
+---
+
+### 2026-05-06 — Pause point / pre-break audit
+
+**Tried**: pre-break audit pass before stepping away from the project.
+
+**State at pause**:
+- HEAD: `76a3430 feat(serving): adapter hot-swap (task 09)`. Both task
+  08 (LoRA scaffold) and task 09 (hot-swap orchestrator) complete and
+  pushed.
+- Droplet `165.245.142.107` running, vLLM (pid 3639) serving Qwen3-VL-8B
+  with `--enable-lora`, FastAPI (pid 296301) on host. v0 adapter loaded
+  in vLLM as `livesight-v0`. `/health` reports `model=livesight-v0`,
+  `adapter_version=v0`.
+- 11 interactions in `2026-05-06.jsonl`. v0 was trained on the first 9;
+  rows 9-10 are post-training reference.
+- v0 adapter: rank 16, 15.3M trainable params, 29 MB bf16 safetensors,
+  final loss 0.061. LoRA influence verified at greedy decode (verbatim
+  phrase reproduction on training image, subtle differences on new
+  images).
+
+**Audit actions taken**:
+- Snapshotted the v0 adapter and `2026-05-06.jsonl` into the repo at
+  `data-backup/`. 46 MB total committed (29 MB safetensors + tokenizer
+  files + 928 KB JSONL with 11 entries). Survives droplet destroy.
+- Recovery playbook in `setup-state.md` extended with steps 5 and 6 —
+  copy adapters/JSONL out of `data-backup/` into runtime locations,
+  then `swap-adapter.sh` to load v0 into the freshly-started vLLM.
+- `setup-state.md` adapter row + new "Interaction data" section reflect
+  current reality (PIDs, vLLM args with LoRA flags, /health behavior,
+  in-repo backup paths).
+- Polished `scripts/dev/backup-claude.sh` (added shebang + `set -euo
+  pipefail` for parity with restore-claude.sh; was already functional,
+  just untracked).
+
+**Plan when resuming**: tasks 10/11 next, in whichever order works.
+Task 11 (real-data LoRA training) needs a bigger interaction set —
+target 20-30 rows before the next training run. The 9-example v0 has
+"almost-but-not-quite memorization"; more data should resolve that
+without any code changes.
+
+**Recovery cost**: cheap. Destroy + recreate is `git clone → restore-claude.sh
+→ provision.sh → cp data-backup → swap-adapter.sh` per the playbook.
+End-to-end ~15 min if HF model cache is cold, faster if warm.
+
+
 
