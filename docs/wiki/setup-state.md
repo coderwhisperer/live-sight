@@ -108,7 +108,7 @@ and push adapters/data to HF.
 
 | Path | Version | Trained on | Loss | Notes |
 |------|---------|-----------|------|-------|
-| (none yet) | | | | |
+| `/shared-docker/adapters/v0/` | v0 | 2026-05-06 (9 interactions from `2026-05-06.jsonl`) | 0.061 final (label-masked) | rank 16, 15.3M trainable params, **29 MB safetensors** (bf16). Task 08 scaffold validation run; not personalized in any meaningful sense — just proves the pipeline produces a real adapter. Trainer scratch lives at `/shared-docker/training-runs/v0-checkpoints/`. |
 
 ## Pushed to HF
 

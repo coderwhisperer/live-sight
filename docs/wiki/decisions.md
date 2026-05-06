@@ -192,3 +192,59 @@ no model-card patches). Cold-start was 41s on MI300X (vs ~34s for 2-VL,
 roughly proportional to model size). KV cache budget after warm-up:
 151.85 GiB (vs 186 GiB for 2-VL) — 3-VL is 8B vs 2-VL's 7B but vLLM's
 auto-sizing left more KV cache headroom for whatever reason.
+
+## 2026-05-06 — LoRA training runs in the rocm container, not the host venv
+
+**Decision**: The `train_lora.py` script lives at
+`backend/src/livesight/training/train_lora.py` (host filesystem, tracked
+in git) but is *executed* inside the `rocm` container via `docker exec`,
+not from the host `backend/.venv`. Same pattern as vLLM. The shell
+wrapper `backend/scripts/train-lora.sh` orchestrates the container call
+and stops/restarts vLLM around it.
+
+**Rationale**: Task 08 step 1 said to install the training stack
+(transformers, peft, datasets, accelerate, trl, torchvision) into the
+host's `backend/.venv`. The host has no `torch+ROCm` — installing the
+generic PyPI torch wheel (CUDA build) would not see the AMD GPU; building
+ROCm torch from source is days of yak-shaving. The `rocm` container
+already ships everything we need:
+- torch 2.9.1+HIP 7.0
+- transformers 4.57.6 (≥4.45 spec requirement)
+- peft 0.18.1 (≥0.13)
+- accelerate 1.13.0 (≥0.34)
+- datasets 4.7.0 (≥2.20)
+
+`trl` is missing but unused — we drive training with plain
+`transformers.Trainer` + a custom multimodal collator, which is what
+`peft` examples for image-text-to-text models do anyway.
+
+**Tradeoffs accepted**:
+- Training and serving cannot coexist on the GPU. vLLM's KV cache fills
+  ~91% of the 192GB; LoRA training of an 8B model needs ~16GB just for
+  the frozen base in bf16, plus activations + LoRA grads + optimizer
+  state. The wrapper stops vLLM during training and restarts it after.
+  `/health` goes down for the duration of the training run + ~30s vLLM
+  warmup. Acceptable for nightly batched training (the use case);
+  awkward for any concurrent serve+train workflow we might want later.
+- Training inputs and outputs cross the host/container boundary via
+  `/shared-docker/` (already bind-mounted at the same path on both
+  sides), so no data copying — just one indirection through `docker exec`.
+
+**Adapter dtype**: LoRA params are trained in fp32 (peft default — keeps
+optimizer math stable on small gradients) and cast to bf16 only at
+serialization time. Halves adapter size from ~58 MB to ~30 MB at rank 16
+without affecting training quality.
+
+**Loss masking**: labels mask the user-prompt and image tokens to -100,
+so cross-entropy is computed only on the assistant response. Without
+this mask, the loss is dominated by predicting image tokens (which we
+can't and shouldn't train), which inflates absolute loss values
+~50× and obscures whether the adapter is learning.
+
+**Per-mode prompts vs training data**: training uses the same per-mode
+user prompts as production (`livesight.inference.prompts`), inlined into
+the training script to avoid pulling FastAPI deps into the container's
+import path. If the prompts change in `prompts.py`, they must change in
+`train_lora.py`'s `USER_PROMPTS` dict too — a small duplication we accept
+because the alternative (a shared module the container has to install)
+adds more weight than it saves.

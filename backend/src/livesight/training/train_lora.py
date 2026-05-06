@@ -114,31 +114,54 @@ def main() -> int:
     processor = AutoProcessor.from_pretrained(str(args.base_model))
     model = AutoModelForImageTextToText.from_pretrained(
         str(args.base_model),
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map="cuda",
     )
     model.config.use_cache = False
 
-    # LoRA on attention projections. peft matches by suffix, so this catches
-    # both language-model and vision-tower attention. For v0 that's fine —
-    # the vision LoRA is a few MB extra. Restrict in v1 if it matters.
+    # LoRA on language-model attention only. Vision tower's modules are
+    # named `attn.proj` (fused QKV+output) and don't end in q/k/v/o_proj,
+    # so suffix matching alone already excludes them — but using an
+    # explicit regex anchored at `model.language_model.` documents the
+    # intent and protects against future Qwen renamings that could add
+    # q_proj-suffixed names elsewhere.
     peft_config = LoraConfig(
         r=args.rank,
         lora_alpha=args.alpha,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+        target_modules=r"^model\.language_model\..*\.(q_proj|k_proj|v_proj|o_proj)$",
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM",
     )
     model = get_peft_model(model, peft_config)
+    # Sanity check: an empty target_modules match yields ~0 trainable
+    # params, which peft sometimes accepts silently. Bail loudly so we
+    # don't burn 60s of compute on a no-op.
+    trainable, _ = model.get_nb_trainable_parameters()
+    if trainable < 1_000_000:
+        print(f"ERROR: only {trainable:,} trainable params — regex didn't match enough modules", file=sys.stderr)
+        print("proj-like modules in the wrapped model (first 20):", file=sys.stderr)
+        for i, (n, _) in enumerate(model.named_modules()):
+            if "proj" in n:
+                print(f"  {n}", file=sys.stderr)
+                if i > 20:
+                    break
+        return 2
     model.print_trainable_parameters()
 
     def collate(batch: list[dict]) -> dict:
-        # Build chat-template strings + a parallel images list.
-        texts = []
+        # We build TWO text variants per example:
+        #   full_text:   user + assistant turns, what we train on
+        #   prompt_text: user turn only with add_generation_prompt=True,
+        #                used to find where the assistant response begins
+        # so we can mask everything before that to -100 in labels — i.e.
+        # compute loss only on the assistant tokens, not on prompt or
+        # image tokens (which dominate the sequence).
+        full_texts = []
+        prompt_texts = []
         images_list = []
         for ex in batch:
-            messages = [
+            full_messages = [
                 {
                     "role": "user",
                     "content": [
@@ -151,30 +174,60 @@ def main() -> int:
                     "content": [{"type": "text", "text": ex["target"]}],
                 },
             ]
-            text = processor.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=False
+            prompt_messages = [full_messages[0]]
+            full_texts.append(
+                processor.apply_chat_template(
+                    full_messages, tokenize=False, add_generation_prompt=False
+                )
             )
-            texts.append(text)
+            prompt_texts.append(
+                processor.apply_chat_template(
+                    prompt_messages, tokenize=False, add_generation_prompt=True
+                )
+            )
             images_list.append([ex["image"]])
 
         inputs = processor(
-            text=texts,
+            text=full_texts,
             images=images_list,
             return_tensors="pt",
             padding=True,
             truncation=True,
             max_length=2048,
         )
-        # v0: compute loss on the full sequence (no user-prompt masking).
-        # v1 should mask the prompt portion of labels to -100.
-        inputs["labels"] = inputs["input_ids"].clone()
+
+        # Per-example prompt length: tokenize prompt-only with the same
+        # image so image-token counts match between full and prompt.
+        prompt_lens = []
+        for prompt_text, images in zip(prompt_texts, images_list, strict=True):
+            p_inputs = processor(
+                text=prompt_text,
+                images=images,
+                return_tensors="pt",
+                padding=False,
+                truncation=True,
+                max_length=2048,
+            )
+            prompt_lens.append(p_inputs["input_ids"].shape[-1])
+
+        labels = inputs["input_ids"].clone()
+        for i, p_len in enumerate(prompt_lens):
+            labels[i, :p_len] = -100
+        # Also mask padding tokens.
+        labels[inputs["attention_mask"] == 0] = -100
+        inputs["labels"] = labels
         return inputs
 
     dataset = Dataset.from_list(examples)
 
     args.output.mkdir(parents=True, exist_ok=True)
+    # Trainer's output_dir is for its own checkpoints/logs, not the
+    # adapter we ship. Keep them in a sibling tree so the adapter dir
+    # contains only adapter files.
+    checkpoints_dir = Path("/shared-docker/training-runs") / f"{args.output.name}-checkpoints"
+    checkpoints_dir.mkdir(parents=True, exist_ok=True)
     training_args = TrainingArguments(
-        output_dir=str(args.output / "checkpoints"),
+        output_dir=str(checkpoints_dir),
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
         learning_rate=args.lr,
@@ -200,6 +253,15 @@ def main() -> int:
     print("starting training")
     train_result = trainer.train()
     print(f"\ntraining done. final loss: {train_result.training_loss:.4f}")
+
+    # Serialize LoRA weights in bf16 (peft instantiates them in fp32 by
+    # default, which inflates the saved file). Training itself ran in
+    # fp32 — this cast happens AFTER trainer.train() returns, so it
+    # doesn't affect optimization dynamics. ~58MB → ~30MB at rank 16.
+    print("casting LoRA params fp32 → bf16 for serialization")
+    for _, param in model.named_parameters():
+        if param.requires_grad and param.dtype == torch.float32:
+            param.data = param.data.to(torch.bfloat16)
 
     print(f"saving adapter to {args.output}")
     model.save_pretrained(str(args.output))

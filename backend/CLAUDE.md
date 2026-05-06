@@ -129,3 +129,22 @@ Why split: keeps Python web deps (FastAPI, httpx, pillow) off the GPU
 container; lets us edit and restart FastAPI without `docker exec` round-trips.
 Network-wise it's free — host→container localhost goes through `docker-proxy`
 on `lo`, no NAT hop.
+
+## LoRA training
+
+Training **runs inside the `rocm` container**, not in the host venv. Same
+pattern as vLLM: container has the GPU stack (torch 2.9.1+HIP 7.0,
+transformers, peft, accelerate, datasets), host has only the web stack.
+Source lives at `backend/src/livesight/training/train_lora.py` (so it's
+tracked in git and accessible inside the container via the bind mount).
+Wrapper at `backend/scripts/train-lora.sh`.
+
+Training and serving are mutually exclusive on the GPU — vLLM's KV cache
+fills ~91% of the 192GB by default, leaving no room for training. The
+wrapper stops vLLM, runs training in the container, then restarts vLLM.
+Total `/health` downtime is the training run + ~30s vLLM warmup.
+
+Where things land:
+- adapters → `/shared-docker/adapters/<name>/` (only adapter files)
+- trainer scratch (logs, intermediate checkpoints if save_strategy is on)
+  → `/shared-docker/training-runs/<name>-checkpoints/` (sibling tree)
