@@ -3,7 +3,7 @@ import { CameraButton } from '@/components/CameraButton';
 import { ModeToggle } from '@/components/ModeToggle';
 import { ResponseDisplay } from '@/components/ResponseDisplay';
 import { useCamera } from '@/hooks/useCamera';
-import { describe } from '@/api/client';
+import { describe, interactionLog } from '@/api/client';
 import type { Mode } from '@/api/types';
 
 function App() {
@@ -24,6 +24,15 @@ function App() {
       const result = await describe({ image_b64: imageB64, mode });
       setDescription(result.description);
       setLatencyMs(result.latency_ms);
+      // Fire-and-forget: feeds nightly LoRA training. Don't block the user
+      // flow if it fails — backend writes JSONL at /shared-docker/data/interactions/.
+      interactionLog({
+        image_b64: imageB64,
+        mode,
+        response: result.description,
+      }).catch((err) => {
+        console.warn('interactionLog failed:', err);
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(msg);
