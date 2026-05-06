@@ -173,4 +173,33 @@ script now downloads 3-VL by default.
 TTS latency over UDP from the demo location; with scene at ~2.5s and
 navigate at ~1–3s, response start time will dominate the perceived UX.
 
+---
+
+### 2026-05-06 — Task 07: frontend ↔ real backend, end-to-end on phone
+
+**Tried**: Wired the laptop frontend to the new droplet (`165.245.142.107`)
+and verified the full camera → describe → speak loop on a real phone over
+the existing cloudflared tunnel. Added the missing `interactionLog`
+fire-and-forget call in `App.tsx` after each successful `describe()`.
+
+Initial approach was `VITE_API_BASE_URL=http://165.245.142.107:8001` in
+`.env.local`. That works from the laptop but fails on the phone: the
+tunnel page is HTTPS, the backend is HTTP, browsers block the mixed-content
+fetch ("NetworkError"). Switched to a Vite proxy: keep `API_BASE` as `/api`,
+configure `server.proxy['/api']` → `http://165.245.142.107:8001`. Same-origin
+from the phone's perspective, no mixed content, no extra CORS plumbing.
+
+**Result**: Working end-to-end on phone over the tunnel. Five interactions
+logged to `/shared-docker/data/interactions/2026-05-06.jsonl` on the droplet
+in the first session. Latencies tracked iteration-log entries above:
+- navigate: ~808 ms — accurate spatial language (hip-height, eye-level, paces).
+- read: working on text-bearing photos.
+- scene: ~2220 ms — verbose but accurate.
+
+**Tech debt noted**: the proxy target is a hardcoded IP in `vite.config.ts`.
+Future cleanup: drive it from an env var so swapping droplets doesn't
+require a code edit.
+
+**Next**: Task 08 (LoRA training scaffold) — interaction log is now
+producing the data it needs.
 
