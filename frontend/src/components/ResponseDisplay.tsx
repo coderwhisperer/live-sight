@@ -5,16 +5,19 @@ interface ResponseDisplayProps {
   description: string | null;
   latencyMs: number | null;
   errorMessage: string | null;
+  question?: string | null;
 }
 
 export function ResponseDisplay({
   description,
   latencyMs,
   errorMessage,
+  question,
 }: ResponseDisplayProps) {
   const { speak } = useTTS();
 
   useEffect(() => {
+    // Speak only the answer — not the user's own question read back.
     if (description) speak(description);
   }, [description, speak]);
 
@@ -29,7 +32,17 @@ export function ResponseDisplay({
         <p className="text-red-700">{errorMessage}</p>
       ) : description ? (
         <>
-          <p>{description}</p>
+          {question && (
+            <p className="mb-2 text-base text-slate-600">
+              <span className="font-semibold text-slate-700">Q:</span> {question}
+            </p>
+          )}
+          <p>
+            {question && (
+              <span className="font-semibold text-slate-700">A: </span>
+            )}
+            {description}
+          </p>
           {latencyMs !== null && (
             <p className="mt-3 text-sm text-slate-500">{latencyMs} ms</p>
           )}

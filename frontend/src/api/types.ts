@@ -1,7 +1,7 @@
 // Mirrors backend Pydantic models in backend/src/livesight/inference/server.py.
 // If the backend contract changes, this file changes in the same commit.
 
-export type Mode = 'navigate' | 'read' | 'scene';
+export type Mode = 'navigate' | 'read' | 'scene' | 'ask';
 
 export interface DescribeRequest {
   image_b64: string;
@@ -14,12 +14,12 @@ export interface DescribeResponse {
 }
 
 export interface QueryRequest {
+  image_b64: string;
   question: string;
-  recent_frames_b64?: string[];
 }
 
 export interface QueryResponse {
-  answer: string;
+  response: string;
   latency_ms: number;
 }
 

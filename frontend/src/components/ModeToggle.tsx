@@ -10,6 +10,7 @@ const MODES: { value: Mode; label: string }[] = [
   { value: 'navigate', label: 'Navigate' },
   { value: 'read', label: 'Read' },
   { value: 'scene', label: 'Scene' },
+  { value: 'ask', label: 'Ask' },
 ];
 
 export function ModeToggle({ value, onChange }: ModeToggleProps) {

@@ -1,37 +1,48 @@
-import { useState } from 'react';
-import { CameraButton } from '@/components/CameraButton';
+import { useRef, useState } from 'react';
+import { CameraButton, type CapturePhase } from '@/components/CameraButton';
 import { CorrectionUI } from '@/components/CorrectionUI';
 import { ModeToggle } from '@/components/ModeToggle';
 import { ResponseDisplay } from '@/components/ResponseDisplay';
 import { useCamera } from '@/hooks/useCamera';
-import { describe, interactionLog } from '@/api/client';
+import {
+  describe,
+  interactionLog,
+  query,
+  transcribeAudio,
+} from '@/api/client';
 import type { Mode } from '@/api/types';
 
 function App() {
   const [mode, setMode] = useState<Mode>('scene');
   const [description, setDescription] = useState<string | null>(null);
+  const [question, setQuestion] = useState<string | null>(null);
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [inFlight, setInFlight] = useState(false);
+  const [phase, setPhase] = useState<CapturePhase>('idle');
   const [currentInteractionId, setCurrentInteractionId] = useState<
     string | null
   >(null);
 
   const { status, error: cameraError, videoRef, capture } = useCamera();
 
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const askImageB64Ref = useRef<string | null>(null);
+
+  // ── single-tap flow (navigate / read / scene) ─────────────────────────
   const handleTap = async () => {
-    if (inFlight) return;
-    setInFlight(true);
+    if (phase !== 'idle') return;
+    setPhase('capturing');
     setErrorMessage(null);
     setCurrentInteractionId(null);
+    setQuestion(null);
     try {
       const imageB64 = await capture();
       const result = await describe({ image_b64: imageB64, mode });
       setDescription(result.description);
       setLatencyMs(result.latency_ms);
-      // Fire-and-forget: feeds nightly LoRA training. Don't block the user
-      // flow if it fails — backend writes JSONL at /shared-docker/data/interactions/.
-      // The returned id lets CorrectionUI PATCH the same row with a user_correction.
+      // Fire-and-forget: feeds nightly LoRA training. The returned id lets
+      // CorrectionUI PATCH the same row with a user_correction.
       interactionLog({
         image_b64: imageB64,
         mode,
@@ -47,7 +58,99 @@ function App() {
       setDescription(null);
       setLatencyMs(null);
     } finally {
-      setInFlight(false);
+      setPhase('idle');
+    }
+  };
+
+  // ── ask flow (long-press): record → transcribe → query ──────────────
+  const handleAskStart = async () => {
+    if (phase !== 'idle') return;
+    setErrorMessage(null);
+    setCurrentInteractionId(null);
+    setQuestion(null);
+    try {
+      // Capture the photo at press start so the picture matches the moment
+      // the user begins speaking — not several seconds later when they let
+      // go. Stored on a ref because we need it after the await chain.
+      askImageB64Ref.current = await capture();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setErrorMessage(`Capture failed: ${msg}`);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setPhase('recording');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setErrorMessage(`Microphone access required: ${msg}`);
+      askImageB64Ref.current = null;
+    }
+  };
+
+  const handleAskEnd = async () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') return;
+
+    await new Promise<void>((resolve) => {
+      recorder.onstop = () => resolve();
+      recorder.stop();
+    });
+    recorder.stream.getTracks().forEach((t) => t.stop());
+
+    const imageB64 = askImageB64Ref.current;
+    askImageB64Ref.current = null;
+    if (!imageB64) {
+      setErrorMessage('No photo captured for this question');
+      setPhase('idle');
+      return;
+    }
+
+    setPhase('transcribing');
+    let transcript: string;
+    try {
+      const audioBlob = new Blob(audioChunksRef.current, {
+        type: 'audio/webm',
+      });
+      const result = await transcribeAudio(audioBlob);
+      transcript = result.transcript.trim();
+      if (!transcript) {
+        setErrorMessage("Couldn't hear a question — try again.");
+        setPhase('idle');
+        return;
+      }
+      setQuestion(transcript);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setErrorMessage(`Transcription failed: ${msg}`);
+      setPhase('idle');
+      return;
+    }
+
+    setPhase('querying');
+    try {
+      const result = await query({ image_b64: imageB64, question: transcript });
+      setDescription(result.response);
+      setLatencyMs(result.latency_ms);
+      // /query auto-logs an interaction-log row internally with mode="ask",
+      // but doesn't return its id. CorrectionUI still mounts so the user can
+      // type / dictate a correction; the PATCH will 404 against this random
+      // id until the backend exposes the real one in QueryResponse.
+      setCurrentInteractionId(crypto.randomUUID());
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setErrorMessage(`Query failed: ${msg}`);
+      setDescription(null);
+      setLatencyMs(null);
+    } finally {
+      setPhase('idle');
     }
   };
 
@@ -77,15 +180,19 @@ function App() {
       )}
 
       <CameraButton
-        onTap={handleTap}
+        mode={mode}
+        phase={phase}
         disabled={status !== 'ready'}
-        inFlight={inFlight}
+        onTap={handleTap}
+        onPressStart={handleAskStart}
+        onPressEnd={handleAskEnd}
       />
 
       <ResponseDisplay
         description={description}
         latencyMs={latencyMs}
         errorMessage={errorMessage}
+        question={question}
       />
 
       {description && currentInteractionId && (
