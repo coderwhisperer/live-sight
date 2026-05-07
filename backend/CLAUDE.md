@@ -194,3 +194,33 @@ can swap. Tighten before public submission.
 Race condition note: a `/describe` in-flight when a swap happens uses
 whichever adapter was active at request start. Acceptable for v0
 (single user, demo context).
+
+## STT (Whisper)
+
+`POST /transcribe` accepts a multipart audio upload, returns
+`{transcript, language, language_probability, duration_s, latency_ms}`.
+Auto-detects language; supports Roman Urdu / English code-switching
+(the actual demo language).
+
+Implementation: faster-whisper (CTranslate2 backend) running
+`whisper-large-v3` on CPU at int8 quantization. Model lives at
+`/shared-docker/models/whisper-large-v3/` (~2.9 GB on disk). Loaded once
+at FastAPI startup via the `warm_whisper` lifespan hook
+(~3.6s warm-up). The endpoint dispatches to `asyncio.to_thread` so a
+long transcription doesn't block the event loop and stall concurrent
+`/describe`/`/query` calls.
+
+**CPU, not GPU**: ctranslate2's pip wheels are CUDA-only and report
+0 visible devices on this ROCm host. Building CT2 from source against
+ROCm is a multi-hour project we've deferred indefinitely; for v0,
+CPU/int8 is sufficient. See `docs/wiki/decisions.md` and
+`docs/wiki/gotchas.md` for the full reasoning.
+
+**Latency expectation**: ~0.5× realtime on this CPU (4s audio →
+~8s transcription). Acceptable for one-off voice corrections (5–30s
+audio → 10–60s wait). If we ever need real-time STT, the path is
+either GPU CT2 (build-from-source) or transformers-Whisper inside
+the rocm container alongside vLLM.
+
+**Memory**: ~2.4 GB host RSS after warm-up (~2 GB of which is the
+model). Host has 235 GB total — no headroom concern.

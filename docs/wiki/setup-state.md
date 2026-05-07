@@ -36,7 +36,8 @@ Logs live at `/shared-docker/logs/`.
 | Service | Where          | Port                   | Status                                                       | Log                                                                |
 |---------|----------------|------------------------|--------------------------------------------------------------|--------------------------------------------------------------------|
 | vLLM    | rocm container | 8000 (internal only)   | running (pid 3639 in container, with `--enable-lora`)       | `/shared-docker/logs/vllm.log`                                     |
-| FastAPI | host           | 8001 (public)          | running (host PID at `/shared-docker/logs/api.pid`, was 296301)| `/shared-docker/logs/api.log` + `/shared-docker/logs/api.stdout.log` |
+| FastAPI | host           | 8001 (public)          | running (host PID at `/shared-docker/logs/api.pid`, was 289378). Endpoints now include `/transcribe` (Whisper STT). | `/shared-docker/logs/api.log` + `/shared-docker/logs/api.stdout.log` |
+| Whisper | host (in-FastAPI process) | (no port — in-process)  | loaded once at FastAPI startup (~3.6s warm), serves `/transcribe`. CPU/int8, ~2 GB RSS. | shared with FastAPI — `livesight.whisper` logger writes to `api.log` |
 | Training| rocm container | —                      | idle (no nightly job yet)                                    | —                                                                  |
 
 vLLM args in use: `vllm serve /shared-docker/models/qwen3-vl-8b --served-model-name qwen2-vl --port 8000 --max-model-len 4096 --dtype bfloat16 --enable-lora --max-loras 2 --max-lora-rank 16`,
@@ -64,6 +65,7 @@ will require either lower `--gpu-memory-utilization` or a smaller `--max-model-l
 | Path                                  | Model                       | Size | Notes                                                                                       |
 |---------------------------------------|-----------------------------|------|---------------------------------------------------------------------------------------------|
 | `/shared-docker/models/qwen3-vl-8b/`  | Qwen/Qwen3-VL-8B-Instruct   | 17 G | **Active** — being served by vLLM. Downloaded fresh by `provision.sh` on 2026-05-06. |
+| `/shared-docker/models/whisper-large-v3/` | Systran/faster-whisper-large-v3 | 2.9 G | Active — loaded into FastAPI on startup, serves `/transcribe`. CPU/int8 (CT2 has no ROCm support). Downloaded 2026-05-07. |
 
 vLLM serves the active model under the historical alias `qwen2-vl` so the
 FastAPI client doesn't need to change. Underlying weights are 3-VL.

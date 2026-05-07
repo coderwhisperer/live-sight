@@ -128,6 +128,58 @@ line. Two safer patterns:
 The exposure window is short (only while the docker exec process runs)
 but real, especially on a multi-tenant host.
 
+## faster-whisper / CTranslate2 has no ROCm support — STT runs on CPU
+
+**Symptom** (hit 2026-05-07 during STT integration): you install
+`faster-whisper`, expect it to use the MI300X like vLLM does, and
+`device='cuda'` quietly falls back or errors. `ctranslate2.get_cuda_device_count()`
+returns `0` on this ROCm host even though `rocm-smi` shows the GPU
+present. The pip wheels for `ctranslate2` are built against NVIDIA
+CUDA only — they don't pick up HIP devices, and there's no ROCm wheel
+on PyPI as of CT2 4.7.1.
+
+**Fix**: use `device='cpu'` + `compute_type='int8'`. On this host
+that gets ~0.5× realtime on `whisper-large-v3` (4s audio → ~8s
+decode). Acceptable for one-off voice corrections (5-30s audio →
+10-60s wait); not acceptable for real-time captioning.
+
+If you ever need GPU Whisper on ROCm: build CTranslate2 from source
+against ROCm, or use a community fork. Multi-hour project, deferred
+indefinitely. Alternative is transformers-Whisper inside the rocm
+container alongside vLLM — works on ROCm via the existing torch+HIP
+stack, but adds VRAM pressure to vLLM's already-tight 19 GB headroom
+and is materially slower than faster-whisper at equivalent quality.
+
+**Don't confuse with**: vLLM's `--enable-lora` ROCm support, which IS
+mature and works fine. The CT2/ROCm gap is specific to ctranslate2,
+not a general ROCm-Python ecosystem statement.
+
+## Whisper hallucinates on silent audio (large-v3 specifically)
+
+**Symptom** (hit 2026-05-07): a 1s silent WAV sent to `/transcribe`
+returned `"Teksting av Nicolai Winther"` — Norwegian for "Subtitles
+by Nicolai Winther". 100% hallucinated. The endpoint returned
+`language=nn` with 0.31 confidence and `duration_s=1.0`.
+
+**Cause**: whisper-large-v3 was trained extensively on YouTube
+subtitle data, where end-of-video subtitle credits are common and
+silent. When fed silence, it pattern-matches to "this is an
+end-of-video silence" and emits a typical credit string. Different
+silent-audio inputs can produce different language credits ("Sub by
+…", "Tekstning af …", etc.) — there's no fixed string, but there
+IS a strong attractor toward subtitle-credit-shaped output.
+
+**Fix**: the frontend that records corrections should client-side
+trim leading/trailing silence (browser VAD or a simple amplitude
+threshold) before uploading. As a backend safety net, we could
+gate the response on `info.language_probability > 0.5` and return
+empty transcript otherwise — but VAD on the recording side is the
+better fix because it also reduces upload size and decode time.
+
+**Don't confuse with**: actual misrecognition of low-volume speech.
+This is specifically the silent-audio failure mode; quiet-but-real
+speech transcribes correctly with appropriate language detection.
+
 ## Recovery playbook gap: data-backup needed manual restoration
 
 **Symptom** (hit 2026-05-06, second recovery cycle): after a fresh

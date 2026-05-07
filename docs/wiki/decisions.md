@@ -301,3 +301,79 @@ now set the env var when starting vLLM.
 swap happens uses whichever adapter was active at the time vLLM accepted
 the request. We don't sync the swap with in-flight requests (would need
 a request-counter or a write-lock). For single-user demo, fine.
+
+## 2026-05-07 — STT via faster-whisper, on CPU, in-FastAPI-process
+
+**Decision**: Speech-to-text for voice corrections runs as a
+`POST /transcribe` endpoint in the same FastAPI process as `/describe`,
+backed by `faster-whisper` (CTranslate2) loading `whisper-large-v3`
+on CPU at int8 quantization. No separate STT service, no GPU.
+
+**Rationale (model)**: Roman Urdu / English code-switching is the
+actual demo language. Whisper-large-v3 is the best multilingual model
+in the open-weights field as of May 2026 — handles Urdu well, handles
+mid-sentence switching to English smoothly. Smaller Whisper variants
+(medium, distil-large-v3) trade accuracy for latency in ways that hurt
+on Urdu specifically. We have RAM to spare.
+
+**Rationale (faster-whisper)**:
+- Cleanest Python API of the three serious open-source Whisper
+  inference libraries (the others: openai-whisper reference, hf
+  transformers).
+- CPU/int8 path is well-tuned: faster-whisper with int8 on CPU is
+  measurably faster than transformers-Whisper float32 on CPU on the
+  same hardware, and matches transformers-Whisper float16 on GPU for
+  many use cases.
+- Drop-in API: `WhisperModel.transcribe(audio_bytes_or_file)` →
+  `(segments, info)`. No tokenizer/processor boilerplate.
+
+**Rationale (CPU, not GPU)**: `ctranslate2`'s pip wheels are CUDA-only.
+On this ROCm host, `ctranslate2.get_cuda_device_count()` returns 0.
+We measured 0.5× realtime on CPU (4s audio → ~8s decode). For one-off
+voice corrections (5-30s of audio = 10-60s wait), that's acceptable —
+not real-time, not blocking other demo work. The MI300X is for
+Qwen3-VL + LoRA; STT is supporting infrastructure, not the AMD story.
+
+**Rationale (in-FastAPI-process, not separate service)**:
+- One process, one log stream, one health surface — keeps ops simple.
+- Whisper's RSS (~2 GB after load) is small relative to the host's
+  235 GB. No memory pressure.
+- The endpoint dispatches to `asyncio.to_thread` so CPU-bound
+  transcription doesn't block the event loop and stall `/describe` /
+  `/query` calls happening concurrently.
+- A separate STT service would mean another port, another process to
+  monitor, another step in `provision.sh`, another row in
+  `setup-state.md`. Not worth the complexity for a single-user demo.
+
+**Alternatives considered**:
+- **Transformers-Whisper on GPU (ROCm)** — would actually use the
+  MI300X, but: requires installing the model + transformers stack
+  inside the rocm container alongside vLLM (host has no torch+ROCm),
+  uses ~3 GB of vLLM's already-tight 19 GB free VRAM, and
+  transformers-Whisper isn't as optimized as faster-whisper even on
+  GPU. Not worth the integration cost.
+- **OpenAI Whisper API** — fastest path, but adds an external
+  dependency, removes the "fully on-device" claim, costs money per
+  minute, leaks audio to a third party. The on-device claim matters
+  for the demo's privacy story.
+- **Smaller Whisper model (medium / distil-large-v3)** — faster on
+  CPU but materially worse on Urdu in our (informal) read of the
+  community evals. Latency was acceptable on large-v3, so we stayed.
+- **Building CT2 from ROCm source / community fork** — multi-hour
+  project. Deferred indefinitely. If real-time STT becomes a
+  requirement (e.g. live captioning, not just corrections), revisit.
+
+**Tradeoffs accepted**:
+- 0.5× realtime is slow. The voice-correction UI will need a
+  "transcribing…" indicator and an audible click on tap-to-stop so
+  the user isn't holding the mic open longer than needed.
+- Silent audio gets hallucinated transcripts ("Teksting av Nicolai
+  Winther" — a known Whisper-large-v3 failure mode from YouTube
+  subtitle training data). Frontend should client-side-VAD-trim
+  silence at the head/tail of recordings before upload, OR the
+  backend should detect very short detected speech segments and
+  return empty transcript instead of the hallucination.
+- STT failure doesn't crash FastAPI: the `warm_whisper` startup hook
+  catches and logs without failing the lifespan. `/transcribe`
+  returns 500 on a per-request failure. `/describe` is unaffected
+  either way.

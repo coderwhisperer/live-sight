@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import json
@@ -6,13 +7,13 @@ from datetime import UTC, datetime
 from typing import Literal
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
 from pydantic import BaseModel
 
-from livesight.inference import vllm_client
+from livesight.inference import vllm_client, whisper_client
 from livesight.inference.adapter_state import get_active, set_active
 from livesight.inference.prompts import (
     max_tokens_for,
@@ -231,3 +232,38 @@ async def interaction_log(req: InteractionLogRequest):
     with path.open("a") as f:
         f.write(json.dumps(record) + "\n")
     return InteractionLogResponse(logged=True)
+
+
+@app.post("/transcribe")
+async def transcribe(audio: UploadFile = File(...)):
+    """Speech-to-text via local faster-whisper (large-v3, CPU/int8).
+
+    Accepts any audio container ffmpeg can read (webm, wav, mp3, m4a…).
+    Auto-detects language; supports Roman Urdu / English code-switching
+    which is what the upcoming voice-correction UI needs.
+
+    Whisper transcription is CPU-bound and can run ~1-6s for typical
+    correction-length audio. We dispatch to a thread so concurrent
+    /describe and /query calls aren't blocked.
+    """
+    audio_bytes = await audio.read()
+    try:
+        result = await asyncio.to_thread(whisper_client.transcribe, audio_bytes)
+        return result
+    except Exception as e:  # noqa: BLE001
+        logger.exception("transcribe failed", extra={"event": "transcribe_error"})
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.on_event("startup")
+async def warm_whisper():
+    """Pre-load Whisper so the first /transcribe call doesn't pay the
+    ~10-30s model-load cost. Failure here is non-fatal — STT is an
+    optional feature; we let FastAPI keep serving /describe etc."""
+    try:
+        await asyncio.to_thread(whisper_client._ensure_model)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            f"whisper pre-load failed: {e}",
+            extra={"event": "whisper_warmup_failed"},
+        )
