@@ -128,6 +128,45 @@ line. Two safer patterns:
 The exposure window is short (only while the docker exec process runs)
 but real, especially on a multi-tenant host.
 
+## Recovery playbook gap: data-backup needed manual restoration
+
+**Symptom** (hit 2026-05-06, second recovery cycle): after a fresh
+droplet provision via the playbook, vLLM came up cleanly with
+`--enable-lora` but `/v1/models` listed only the base model. Both
+`/shared-docker/adapters/` and `/shared-docker/data/interactions/`
+were empty. The adapter weights and interaction JSONL were sitting
+untouched in `data-backup/` (which had come down with the git clone)
+but never made it to the runtime paths the services read from.
+
+**Root cause**: the playbook of the day had 6 steps. Steps 1-4 were a
+single command each: clone, .env, restore-claude.sh, provision.sh.
+Steps 5-6 were manual `cp -r` commands and a manual `swap-adapter.sh`
+call that you had to remember after provision.sh finished. Easy to
+miss; we did miss it.
+
+**Fix**: `scripts/dev/restore-data.sh` does the copy + load. It's
+idempotent (skip-if-exists at every copy step, and treats vLLM's
+"already loaded" 400 as success). `provision.sh` calls it after
+FastAPI is verified up and before the smoke test. Recovery is now 4
+commands; the destroy/recreate cycle no longer requires anyone to
+remember the data-backup step.
+
+**Multiple adapters**: when several adapter directories exist under
+`data-backup/adapters/` or `/shared-docker/adapters/`, restore-data.sh
+sorts lexicographically and makes the highest-versioned one
+(e.g. `v1` over `v0`) the active routing target. Lower adapters are
+loaded into vLLM but don't touch `AdapterState`, so they're available
+for fast manual swaps without changing the demo state.
+
+**Related, deferred to task 15**: `/health` reports `AdapterState`'s
+intent — the routing target FastAPI is set to use — rather than vLLM's
+actually-loaded models. We caught this gap tonight only by manually
+querying `/v1/models`. If swap-adapter.sh fails to load an adapter into
+vLLM but FastAPI's AdapterState updates anyway (or vice versa), `/health`
+would report the inconsistency as healthy. Real fix is to make `/health`
+do a `GET /v1/models` round-trip and verify the active name appears in
+the loaded list. Out of scope for this commit.
+
 ## vLLM — `--enable-lora` is necessary but not sufficient for runtime adapter loading
 
 **Cause** (hit 2026-05-06 during task 09): vLLM 0.17.1+rocm700 starts

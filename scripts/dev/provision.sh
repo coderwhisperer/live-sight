@@ -217,12 +217,22 @@ if ! curl -sf http://localhost:8001/health >/dev/null 2>&1; then
 fi
 echo "FastAPI ready"
 
-# ---- 8. Verify both endpoints (final gate before reporting success) ----
+# ---- 8. Verify both endpoints ----
 step "verifying endpoints"
 curl -sf http://localhost:8000/v1/models >/dev/null && echo "vLLM /v1/models OK"
 curl -sf http://localhost:8001/health    >/dev/null && echo "FastAPI /health OK"
 
-# ---- 9. Smoke test (vLLM end-to-end) ----
+# ---- 9. Restore data from data-backup/ if present ----
+# Idempotent: skips files/adapters already at runtime locations. If
+# data-backup/ doesn't exist (e.g. very first provision), exits 0.
+# After copying, loads each adapter into vLLM and sets the highest as
+# active. Without this step, a fresh droplet has base model only and
+# the previous "manual steps 5-6" of the recovery playbook had to be
+# remembered. See gotchas.md "Recovery playbook gap" entry.
+step "restoring data from data-backup/ if present"
+"${REPO_DIR}/scripts/dev/restore-data.sh"
+
+# ---- 10. Smoke test (vLLM end-to-end) ----
 step "smoke test"
 "${REPO_DIR}/backend/scripts/smoke-test.sh"
 

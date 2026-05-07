@@ -98,27 +98,24 @@ chmod 600 /shared-docker/live-sight/.env
 #    you want continuity of conversation history. Skip on a clean start.
 cd /shared-docker/live-sight && ./scripts/dev/restore-claude.sh
 
-# 4. Run provision — handles the model download, venv, vLLM start, FastAPI start, and smoke test.
-#    First run takes ~15 min if HF cache is cold (~42s on the 2026-05-06 cycle); ~1 min on a re-provision.
+# 4. Run provision — handles model download, venv, vLLM start, FastAPI
+#    start, AND data-backup restore (adapters + JSONL → runtime paths,
+#    plus loading each adapter into vLLM). Idempotent — safe to rerun.
+#    First run ~15 min cold (HF model cache miss), ~1 min on re-provision.
 cd /shared-docker/live-sight && ./scripts/dev/provision.sh
-
-# 5. Restore adapters and interaction JSONL from the in-repo backup.
-#    `data-backup/` is committed — the v0 LoRA adapter and any past
-#    interaction data come down with the clone. Copy them out to the
-#    paths the runtime expects:
-mkdir -p /shared-docker/adapters /shared-docker/data/interactions
-cp -r /shared-docker/live-sight/data-backup/adapters/* /shared-docker/adapters/
-cp /shared-docker/live-sight/data-backup/interactions/*.jsonl /shared-docker/data/interactions/
-
-# 6. Re-load v0 adapter into the running vLLM and route FastAPI to it.
-#    provision.sh starts vLLM with --enable-lora but doesn't load adapters.
-./backend/scripts/swap-adapter.sh /shared-docker/adapters/v0
 ```
 
-After provision + restore exits cleanly, update the **Last updated** and
-**Public IP** fields above. Run `backend/scripts/smoke-test-api.sh` from
-your laptop using the new public IP to confirm external reachability.
-Verify `/health` reports `"adapter_version": "v0"`.
+That's it — 4 commands. provision.sh internally calls
+`scripts/dev/restore-data.sh` after FastAPI is up, which copies any
+adapters/JSONL from `data-backup/` into runtime locations and loads the
+highest-versioned adapter as the active routing target. Pre-2026-05-06
+versions of the playbook had data restoration as separate manual
+commands (steps 5-6), which were easy to forget — see gotchas.md.
+
+After provision exits cleanly, update the **Last updated** and **Public
+IP** fields above. Run `backend/scripts/smoke-test-api.sh` from your
+laptop using the new public IP to confirm external reachability. Verify
+`/health` reports `"adapter_version": "v0"`.
 
 Before destroying, run `scripts/dev/destroy-safely.sh` from the host to
 push any uncommitted state to GitHub, snapshot Claude Code state into the
