@@ -1,0 +1,248 @@
+# Task 11 — Train v1 Adapter on Real Data
+
+## Goal
+
+Train a v1 LoRA adapter on the 25-50+ interactions collected in task 10,
+producing an adapter that:
+
+1. Generalizes (doesn't just memorize the training set like v0 did)
+2. Demonstrates visible personalization in the demo
+3. Has a meaningful loss curve to show on the dashboard
+4. Can be hot-swapped into vLLM via the existing task-09 infrastructure
+
+This is the demo's hero technical artifact. v0 proved the pipeline. v1
+proves the *product*.
+
+## Why this matters
+
+The 90s demo's structure leans on the v0 vs v1 comparison: "this is the
+base model, here's what it does. Now here's the v1 adapter trained on
+Jamshed's week of usage — same image, watch how the response changes."
+
+For that to land, v1 needs to be visibly different from base on at least
+some images, ideally with a stylistic shift the audience can recognize
+("more concise," "more detail-oriented," "more spatial language").
+
+## Acceptance criteria
+
+1. v1 adapter at `/shared-docker/adapters/v1/` with adapter_config.json +
+   adapter_model.safetensors
+2. Adapter file 30-50MB (rank 16, bf16 — same scaffold as v0)
+3. Training loss curve from 0.5+ down to <0.2 (won't memorize like v0
+   did because more data → less overfitting)
+4. v1 hot-swapped into vLLM and `/health` reports v1 as active
+5. Side-by-side comparison: v0 vs v1 vs base on at least 2 new images
+   (not in training set), greedy decode, with at least one image where
+   v1's output is visibly different from base
+6. v1 adapter backed up to `data-backup/adapters/v1/` and committed
+
+## Steps
+
+### 0. Verify state
+
+```bash
+# On droplet
+curl -sf http://localhost:8001/health
+ls /shared-docker/adapters/    # should show v0
+wc -l /shared-docker/data/interactions/*.jsonl  # should be 25+ for this task
+```
+
+If interaction count is below 25, finish task 10 first. Training on
+fewer than 25 examples produces an adapter not measurably different
+from v0.
+
+### 1. Pre-training fixes to train_lora.py
+
+Several known limitations in the v0 training that should be addressed
+before v1. None are blockers — but each one improves v1's quality.
+
+**Fix 1: Verify label masking is actually applied.** Re-read the collate
+function in `backend/src/livesight/training/train_lora.py`. The label
+masking should set non-assistant tokens to -100. v0's loss curve started
+at 0.27 (low because masking was applied), but worth verifying for v1.
+
+**Fix 2: Increase max_steps relative to dataset size.**
+
+v0: 9 examples × ~3 epochs (max_steps=50, batch_size=1, grad_accum=4)
+   = ~150 effective examples seen.
+
+For v1 with 30 examples, max_steps=100-150 keeps the same effective
+epoch count. Don't raise too high — overfitting is the failure mode.
+
+**Fix 3: Consider dataset shuffling.** The dataset doesn't currently
+shuffle between epochs. With 9 examples this didn't matter; with 30+ it
+does. PyTorch's DataLoader shuffling should be enabled.
+
+**Fix 4: Save intermediate checkpoints.** Currently `save_strategy="no"`.
+For v1, set `save_strategy="steps", save_steps=25` so we can compare
+checkpoint quality and pick the best one. Saves to
+`/shared-docker/training-runs/v1-checkpoints/`.
+
+Apply these four small fixes before training.
+
+### 2. Train v1
+
+```bash
+./backend/scripts/train-lora.sh \
+  /shared-docker/data/interactions/2026-05-XX.jsonl \
+  /shared-docker/adapters/v1
+```
+
+Where the JSONL path is whatever date(s) contain your interactions. If
+you have multiple JSONLs across multiple days, concatenate first:
+
+```bash
+cat /shared-docker/data/interactions/*.jsonl > /tmp/v1-training-data.jsonl
+./backend/scripts/train-lora.sh /tmp/v1-training-data.jsonl /shared-docker/adapters/v1
+```
+
+Expected runtime: 2-5 minutes for 30 examples × max_steps=100.
+
+Watch for:
+- Loss curve: should start ~0.5-1.5 and drop. Final loss in 0.05-0.3
+  range is healthy. Below 0.05 is concerning (overfitting).
+- No NaN or sudden spikes
+- Trainable params: still 15.3M (same architecture as v0)
+- Adapter size after save: 30-50MB
+
+### 3. Hot-swap to v1
+
+```bash
+./backend/scripts/swap-adapter.sh /shared-docker/adapters/v1
+```
+
+Verify:
+- `/health` reports `livesight-v1` and version `v1`
+- `/v1/models` lists qwen2-vl, livesight-v0, livesight-v1
+
+### 4. Comparison testing
+
+This is the deliverable — show the adapter does something visible.
+
+Pick 3 test images:
+- Image A: from training set (one of the 30 you tapped)
+- Image B: not in training set, similar context (e.g., same room,
+  different angle)
+- Image C: not in training set, different context (e.g., outdoor when
+  training was indoor)
+
+For each image, run greedy decode (temperature=0) against base, v0, v1:
+
+```bash
+for adapter in qwen2-vl livesight-v0 livesight-v1; do
+  echo "=== adapter: $adapter ==="
+  curl -s http://localhost:8000/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "
+import json, base64
+with open('/path/to/test-image.jpg', 'rb') as f:
+  b64 = base64.b64encode(f.read()).decode()
+print(json.dumps({
+  'model': '$adapter',
+  'messages': [{
+    'role': 'user',
+    'content': [
+      {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{b64}'}},
+      {'type': 'text', 'text': 'You are guiding a blind person. Describe the scene briefly with paces and heights.'}
+    ]
+  }],
+  'temperature': 0.0,
+  'max_tokens': 200
+}))")" \
+    | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['choices'][0]['message']['content'])"
+done
+```
+
+Save these comparisons in a markdown file at `data-backup/comparisons/v1-vs-v0-vs-base.md`. This is demo asset material.
+
+### 5. Honest evaluation
+
+The hard question: is v1 visibly better than v0?
+
+Three possible outcomes:
+
+**Outcome A: v1 is clearly better.** Outputs reflect your specific
+context (objects you photographed often, phrasing patterns from the
+training data). Demo gold.
+
+**Outcome B: v1 is similar to v0.** Adapter is doing something but the
+difference isn't striking. Acceptable for demo — frame as "subtle
+personalization that compounds over weeks of use." The architecture
+story still works.
+
+**Outcome C: v1 is clearly worse than v0.** Overfit, or trained on
+contradictory examples. Diagnose: check loss curve for divergence, check
+for noisy training examples. May need to revert to v0 for the demo and
+accept that 30 examples wasn't enough.
+
+Be honest about which outcome you're in. Don't oversell. The demo can
+absorb Outcome B; trying to claim Outcome A when it's actually B will
+backfire.
+
+### 6. Backup and commit
+
+```bash
+mkdir -p /shared-docker/live-sight/data-backup/adapters/v1
+cp -r /shared-docker/adapters/v1/* /shared-docker/live-sight/data-backup/adapters/v1/
+
+cd /shared-docker/live-sight
+git add data-backup/adapters/v1/ data-backup/comparisons/
+git commit -m "feat(adapters): v1 trained on N interactions"
+git push origin develop
+```
+
+Update `docs/wiki/setup-state.md` adapters table with v1 entry.
+
+Update `docs/wiki/iteration-log.md` with v1 training results — loss
+curve, comparison observations, which outcome (A/B/C) we landed in.
+
+### 7. Code/script commits
+
+If you applied the four fixes from step 1, commit those separately
+*before* training v1, with a clear message:
+
+```bash
+git commit -m "feat(training): pre-v1 fixes — shuffling, max_steps, checkpoint saves"
+```
+
+Then the v1 training is a clean run against the fixed code.
+
+## When you finish
+
+Stop and report:
+- Loss curve (start → end)
+- Adapter size
+- Comparison output for the 3 test images
+- Honest read on outcome (A/B/C)
+- Whether the demo should use v1 or fall back to v0
+
+## Things that might go wrong
+
+1. **OOM during training.** 30 examples shouldn't OOM at batch_size=1.
+   If it does, check that vLLM was stopped (the train-lora.sh wrapper
+   handles this). Verify with `rocm-smi --showmeminfo vram` before
+   training.
+
+2. **Loss diverges (NaN or sudden spike).** Usually means a bad training
+   example (corrupted image, malformed JSON). Filter the JSONL for entries
+   with valid base64 and reasonable response lengths before training.
+
+3. **v1 produces broken outputs (gibberish or repeated tokens).** Adapter
+   merged badly. Reload base by `swap-adapter.sh --base`, retrain with
+   lower learning rate (1e-4 instead of 2e-4).
+
+4. **Training takes longer than expected.** With 30 examples and
+   max_steps=100, expect 3-5 minutes. If it's running 15+ minutes,
+   something is wrong — kill it, check logs.
+
+5. **vLLM fails to load v1 adapter after training.** Check adapter rank
+   is still 16 (matches `--max-lora-rank 16`). Check adapter_config.json
+   has correct base_model_name_or_path.
+
+6. **Outcome C (v1 worse than v0).** Most likely cause: data quality.
+   Some interactions in your JSONL have responses the model "shouldn't"
+   produce again (e.g., the model said "kitchen" when you photographed
+   a doorway, and you didn't correct it). Filter by `user_correction`
+   priority — only train on examples with corrections, OR train only on
+   examples where the response is plausibly correct. Manual curation
+   pays off here.

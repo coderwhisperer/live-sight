@@ -92,7 +92,7 @@ def main() -> int:
     parser.add_argument("--base-model", required=True, type=Path)
     parser.add_argument("--rank", type=int, default=16)
     parser.add_argument("--alpha", type=int, default=32)
-    parser.add_argument("--max-steps", type=int, default=50)
+    parser.add_argument("--max-steps", type=int, default=100)
     parser.add_argument("--lr", type=float, default=2e-4)
     args = parser.parse_args()
 
@@ -218,12 +218,20 @@ def main() -> int:
         inputs["labels"] = labels
         return inputs
 
-    dataset = Dataset.from_list(examples)
+    # Pre-shuffle the dataset before handing it to Trainer. Trainer's
+    # default sampler is RandomSampler which already reshuffles per
+    # epoch, but with a small dataset (and a small subset of corrected
+    # examples within it) we want a guaranteed mix on the first pass
+    # too — otherwise the first few logging windows could see all
+    # corrections or none of them.
+    dataset = Dataset.from_list(examples).shuffle(seed=42)
 
     args.output.mkdir(parents=True, exist_ok=True)
     # Trainer's output_dir is for its own checkpoints/logs, not the
     # adapter we ship. Keep them in a sibling tree so the adapter dir
-    # contains only adapter files.
+    # contains only adapter files. With save_strategy="steps", peft
+    # checkpoint snapshots land here every save_steps; the final adapter
+    # we serve is still written explicitly to args.output below.
     checkpoints_dir = Path("/shared-docker/training-runs") / f"{args.output.name}-checkpoints"
     checkpoints_dir.mkdir(parents=True, exist_ok=True)
     training_args = TrainingArguments(
@@ -237,7 +245,8 @@ def main() -> int:
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         logging_steps=5,
-        save_strategy="no",  # we save adapter explicitly at the end
+        save_strategy="steps",
+        save_steps=25,
         report_to=[],
         remove_unused_columns=False,
         dataloader_num_workers=0,
