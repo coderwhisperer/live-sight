@@ -84,9 +84,7 @@ export function CorrectionUI({
         type: 'audio/webm',
       });
       const { transcript } = await transcribeAudio(audioBlob);
-      setCorrectionText((prev) =>
-        prev.trim() ? `${prev} ${transcript}` : transcript,
-      );
+      setCorrectionText(transcript);
       setMode('editing');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
