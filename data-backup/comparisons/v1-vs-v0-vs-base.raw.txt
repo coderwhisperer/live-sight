@@ -1,0 +1,131 @@
+loaded 25 valid rows across both JSONLs
+  corrected: 5
+  uncorrected: 20
+
+========== CORRECTED entry (in training set) ==========
+source: 2026-05-07.jsonl, mode=read
+JSONL response:
+  1. Active Recall
+-writing down every tiny thing
+we have learned and keep
+recalling them
+2. Kumon Method
+-Learning in small powerful
+steps
+-Daily bite sized learning
+3. Spaced Repetition
+-space review over time
+-review right before forgetting
+4. Kaizen
+-1% daily improvement
+-continuous improvement through
+small consistent steps
+5. Suid (Art of focus)
+JSONL user_correction:
+  1. Active Recall
+-writing down every tiny thing
+we have learned and keep
+recalling them
+2. Kuman Method
+-Learning in small powerful
+steps
+-Daily bite sized learning
+3. Spaced Repetition
+-space review over time
+-review right before forgetting
+4. Kaizen
+-1% daily improvement
+-continuous improvement through
+small consistent steps
+5. Suuu (Art of focus)
+
+test prompt: 'Read out the text in this image clearly.'
+
+--- qwen2-vl ---
+1. Active Recall
+- writing down every tiny thing
+- we have learned and keep
+recalling them
+
+2. Kumon Method
+- Learning in small powerful
+steps
+- Daily byte sized learning
+
+3. Spaced Repetition
+- space review over time
+- review right before forgetting
+
+4. Kaizen
+- 1% daily improvement
+- continuous improvement through
+small consistent steps
+
+5. Suid (Art of focus)
+
+--- livesight-v0 ---
+1. Active Recall
+- Writing down every tiny thing
+- we have learned and keep
+recalling them
+
+2. Kumon Method
+- Learning in small powerful
+steps
+- Daily bite sized learning
+
+3. Spaced Repetition
+- Space review over time
+- Review right before forgetting
+
+4. Kaizen
+- 1% daily improvement
+- Continuous improvement through
+Small consistent steps
+
+5. Suid (Art of focus)
+
+--- livesight-v1 ---
+1. Active Recall
+-writing down every tiny thing
+we have learned and keep
+recalling them
+
+2. Kuman Method
+-Learning in small powerful
+steps
+-Daily bite sized learning
+
+3. Spaced Repetition
+-space review over time
+-review right before forgetting
+
+4. Kaizen
+-1% daily improvement
+-continuous improvement through
+small consistent steps
+
+5. Suud (Art of focus)
+
+
+========== UNCORRECTED entry (in training set) ==========
+source: 2026-05-06.jsonl, mode=scene
+JSONL response:
+  This is a close-up, angled photograph of a black computer keyboard, focusing on the upper-left and center portion of the key layout.
+
+Here is a detailed description of what is visible:
+
+- **Keyboard Branding**: The brand name “TYLER” is visible in a silver or white, stylized font along the top right edge of the keyboard.
+- **Key Layout**: The image shows a standard QWERTY layout with black, matte-
+
+test prompt: 'Describe this scene briefly for someone who cannot see it.'
+
+--- qwen2-vl ---
+A close-up view of a black, compact keyboard with the brand name “TYLER” printed in silver on the upper right corner. The keys are standard QWERTY layout, and the image is slightly tilted, showing the keyboard resting on a white surface. The top edge of the image reveals a hint of a red and black object in the background.
+
+--- livesight-v0 ---
+This is a close-up, angled shot of a black wireless keyboard resting on a white surface. The keyboard has a compact layout with clearly visible keys, including “Esc,” “Tab,” “Caps Lock,” and standard letter keys. The brand name “TYLER” is printed in white along the top right edge of the keyboard. The image is slightly tilted, and the background includes a small portion of a red and black object at the top.
+
+--- livesight-v1 ---
+A close-up of a black wireless keyboard with the brand name “TYLER” printed in white on the upper right corner. The keyboard is placed on a white surface, and the top edge of a red and black object is visible in the upper left corner of the image.
+

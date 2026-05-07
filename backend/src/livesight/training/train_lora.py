@@ -65,7 +65,8 @@ def _pil_from_b64(b64: str) -> Image.Image:
 
 def _load_examples(jsonl_path: Path) -> list[dict]:
     examples = []
-    for line in jsonl_path.read_text().splitlines():
+    skipped = 0
+    for i, line in enumerate(jsonl_path.read_text().splitlines()):
         if not line.strip():
             continue
         row = json.loads(line)
@@ -75,13 +76,28 @@ def _load_examples(jsonl_path: Path) -> list[dict]:
         mode = row.get("mode", "scene")
         if mode not in USER_PROMPTS:
             mode = "scene"
+        # Some interaction rows are placeholders left over from UI
+        # wiring (e.g. image_b64="AAAA", response="test"). Skip rows
+        # whose base64 doesn't decode to a real image so one bad row
+        # doesn't crash the whole training run.
+        try:
+            image = _pil_from_b64(row["image_b64"])
+        except Exception as e:
+            print(
+                f"  skipping row {i}: image_b64 not a valid image "
+                f"({type(e).__name__}: {e})"
+            )
+            skipped += 1
+            continue
         examples.append(
             {
-                "image": _pil_from_b64(row["image_b64"]),
+                "image": image,
                 "user_prompt": USER_PROMPTS[mode],
                 "target": target,
             }
         )
+    if skipped:
+        print(f"  skipped {skipped} rows due to invalid images")
     return examples
 
 

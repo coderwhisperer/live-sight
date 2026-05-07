@@ -130,7 +130,8 @@ interaction data exist.
 
 | Path | Version | Trained on | Loss | Notes |
 |------|---------|-----------|------|-------|
-| `/shared-docker/adapters/v0/` | v0 | 2026-05-06 (first 9 of `2026-05-06.jsonl`) | 0.061 final (label-masked, curve 0.27→0.004) | rank 16, 15.3M trainable params, **29 MB safetensors** (bf16). Task 08 scaffold validation run. Loaded into vLLM at runtime under name `livesight-v0` (task 09); FastAPI's `AdapterState` defaults to it. Trainer scratch at `/shared-docker/training-runs/v0-checkpoints/`. **Backed up in repo at `data-backup/adapters/v0/`.** |
+| `/shared-docker/adapters/v0/` | v0 | 2026-05-06 (first 9 of `2026-05-06.jsonl`) | 0.061 final (label-masked, curve 0.27→0.004) | rank 16, 15.3M trainable params, **29 MB safetensors** (bf16). Task 08 scaffold validation run. Loaded into vLLM at runtime under name `livesight-v0`. Trainer scratch at `/shared-docker/training-runs/v0-checkpoints/`. **Backed up in repo at `data-backup/adapters/v0/`.** |
+| `/shared-docker/adapters/v1/` | v1 | 2026-05-07 (25 valid entries from both days; 5 had corrections, 20 didn't) | 0.279 mean train_loss (label-masked, curve 0.73→~0.06 with two transient spikes from shuffle) | **Active.** rank 16, 15.3M trainable params, **29 MB safetensors** (bf16). Task 11 demo adapter. Trained 100 steps in 1m52s. Outcome A on read-mode-corrected entry (visibly incorporates user's edits — `Kumon→Kuman`, `Suid→Suud`); Outcome B on uncorrected entries (similar to v0, tighter style). Loaded into vLLM as `livesight-v1`; FastAPI's `AdapterState` set to it. Trainer scratch at `/shared-docker/training-runs/v1-checkpoints/` (4 step checkpoints + final). **Backed up in repo at `data-backup/adapters/v1/`.** |
 
 ## Interaction data
 

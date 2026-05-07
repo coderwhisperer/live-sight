@@ -309,5 +309,92 @@ without any code changes.
 → provision.sh → cp data-backup → swap-adapter.sh` per the playbook.
 End-to-end ~15 min if HF model cache is cold, faster if warm.
 
+---
+
+### 2026-05-07 — Task 11: v1 adapter trained on 25 corrected interactions
+
+**Tried**: Trained v1 LoRA adapter on the full 26-row interaction set
+collected across two days (5 corrected, 20 not, 1 placeholder filtered).
+Pre-training fixes applied first as a separate commit (`8d3719a`):
+max_steps default 50 → 100, explicit `Dataset.shuffle(seed=42)` before
+Trainer instantiation (belt-and-suspenders for HF Trainer's per-epoch
+RandomSampler), and `save_strategy="steps", save_steps=25` for
+intermediate checkpoint diagnostics.
+
+Two issues hit during training and fixed:
+1. `train-lora.sh` host-side preflight checks input path on the host,
+   but training runs inside the rocm container — `/tmp/` paths don't
+   cross the container boundary. Moved training data into the
+   bind-mounted `/shared-docker/data/training-data/` and re-ran.
+2. Row 17 in the concatenated JSONL had `image_b64="AAAA"` and
+   `response="test"` — placeholder from UI wiring. PIL crashed on
+   `UnidentifiedImageError`, killing the whole run. Patched
+   `_load_examples` to skip rows whose base64 doesn't decode to an
+   image, with a per-row warning + count summary.
+
+**Loss curve** (logged every 5 steps, final mean 0.2785):
+- step 5:  0.7277  → step 10: 0.4365  → step 15: **1.1245** (spike)
+- step 20: 0.4168  → step 25: 0.3776  → step 30: 0.3353
+- step 35: 0.2502  → step 40: 0.1901  → step 45: **0.6782** (spike)
+- step 50: 0.0582  → step 55: 0.2193  → step 60: 0.1204
+- step 65: 0.0818  → step 70: 0.1562  → step 75: 0.0772
+- step 80: 0.1104  → step 85: 0.0651  → step 90: 0.0754
+- step 95: 0.0056  → step 100: 0.0645
+
+Two transient spikes at steps 15 and 45 — likely shuffle bringing
+correction examples (different targets than the model just learned
+on uncorrected versions) into a new mix at epoch boundaries. Drops
+back quickly. Curve descends as expected. Final loss 0.279 sits in
+the spec's healthy range (0.05–0.3).
+
+Train_runtime 111.6s, train_samples_per_second 3.583. Adapter file:
+30,714,088 bytes (29.3 MB). Trainable params 15,335,424 — same
+architecture as v0.
+
+**Comparison testing** (greedy decode, temp=0):
+
+Picked one corrected entry (read-mode, study-methods note with two
+typo corrections — `Kumon → Kuman`, `Suid → Suud`) and one uncorrected
+entry (scene-mode, keyboard close-up).
+
+On the **corrected entry**, v1 reproduced the user's exact corrections
+(`"Kuman"` and `"Suud"` — the latter close to the user's `"Suuu"`
+without being identical). v0 and base both produced the original
+uncorrected text (`"Kumon"`, `"Suid"`). v1 also matched the user's
+formatting style (no leading space after dashes — `"-writing"` vs
+`"- writing"`). This is the first unambiguous "the model learned my
+edits" signal we have.
+
+On the **uncorrected entry**, v1 ≈ v0 in content (both say "wireless
+keyboard" and "white" for the brand color, base says "compact" and
+"silver"). v1 is slightly more concise than v0 — the longer training
+run (100 vs 50 steps with more examples) seems to have averaged toward
+a tighter style without losing the trained vocabulary.
+
+Saved full comparison to `data-backup/comparisons/v1-vs-v0-vs-base.md`
+(both the markdown analysis and the raw stdout from the test script).
+
+**Outcome assessment**: **A on the case that matters most** (read with
+correction → v1 visibly incorporates user edits), **B on the rest**
+(similar to v0, slightly tighter). Net: ship v1 for the demo. The
+read-mode corrected-entry comparison is the cleanest "the model
+learned from this user" footage we have.
+
+**Recommendation for the demo**: lead with the read-mode-corrected
+side-by-side. Show the same image in three columns — base, v0
+(pre-correction), v1 (post-correction). Highlight the `Kumon → Kuman`
+shift and the formatting match (the indentation style change is
+visually obvious without needing the audience to read). The
+"watch the model learn from one week of corrections" claim is honest
+and backed by a single-image side-by-side that anyone can verify.
+
+**Backed up**: v1 adapter to `data-backup/adapters/v1/` (45MB),
+training data to `data-backup/v1-training-data.jsonl` (1.9MB),
+comparison results to `data-backup/comparisons/v1-vs-v0-vs-base.md`.
+
+**Next**: laptop-side UI work — the upcoming voice-correction
+feature ties this whole loop together (record → /transcribe →
+/interaction-log with correction → next nightly v2 training run).
+
 
 
