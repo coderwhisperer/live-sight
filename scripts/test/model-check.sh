@@ -19,10 +19,11 @@ print(json.dumps({
     'messages': [{
         'role': 'user',
         'content': [
-            {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{b64}'}},
+            # {'type': 'image_url', 'image_url': {'url': f'data:image/jpeg;base64,{b64}'}},
             # {'type': 'text', 'text': 'What text is visible in this image? Transcribe it exactly.'}
             # {'type': 'text', 'text': 'What can you see in this image? Describe it exactly.'}
-            {'type': 'text', 'text': 'What can you see in this image? Describe it in 1-2 sentences. Then guide a blind person to navigate the scene. Be as detailed as possible.'}
+            # {'type': 'text', 'text': 'What can you see in this image? Describe it in 1-2 sentences. Then guide a blind person to navigate the scene. Be as detailed as possible.'}
+            {'type': 'text', 'text': 'Can you work with text only without the image? If so, what is 2+2? And can you understand and merge two sentences?'}
         ]
     }],
     'max_tokens': 300
