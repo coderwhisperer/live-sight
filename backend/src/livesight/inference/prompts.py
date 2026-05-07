@@ -49,8 +49,17 @@ def max_tokens_for(mode: Mode) -> int:
     return _MAX_TOKENS[mode]
 
 
-def query_prompt(question: str) -> str:
-    return (
-        "You are helping a blind user understand their surroundings. "
-        f"Answer this question based on the image: {question}"
-    )
+# For /query (voice/text question + image). Used as a `system` role
+# message; the user's literal question text becomes the `user` message
+# alongside the image. Splitting role-vs-question this way keeps the
+# behavior framing out of the user turn — earlier "wrap the question
+# in a sentence" attempts had the model treat the framing as part of
+# the question and answer the framing instead of the actual question.
+QUERY_SYSTEM_PROMPT = (
+    "You are Live Sight, a vision assistant for a blind person. "
+    "Answer their specific question about what they're seeing. "
+    "Be brief and clear. If the image doesn't contain enough information "
+    "to answer, say so. Don't describe the entire scene unless they "
+    "asked for that."
+)
+QUERY_MAX_TOKENS = 350

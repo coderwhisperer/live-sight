@@ -18,8 +18,9 @@ from pydantic import BaseModel
 from livesight.inference import vllm_client, whisper_client
 from livesight.inference.adapter_state import get_active, set_active
 from livesight.inference.prompts import (
+    QUERY_MAX_TOKENS,
+    QUERY_SYSTEM_PROMPT,
     max_tokens_for,
-    query_prompt,
     user_prompt_for,
 )
 from livesight.shared.config import (
@@ -72,12 +73,12 @@ class DescribeResponse(BaseModel):
 
 
 class QueryRequest(BaseModel):
+    image_b64: str
     question: str
-    recent_frames_b64: list[str] | None = None
 
 
 class QueryResponse(BaseModel):
-    answer: str
+    response: str
     latency_ms: int
 
 
@@ -86,6 +87,10 @@ class InteractionLogRequest(BaseModel):
     mode: str
     response: str
     user_correction: str | None = None
+    # Populated only for ask-mode entries (logged from /query). Other
+    # modes leave it null so the JSONL row schema stays unified —
+    # `mode == "ask"` is the discriminator at read time.
+    question: str | None = None
 
 
 class InteractionLogResponse(BaseModel):
@@ -220,19 +225,51 @@ async def describe(req: DescribeRequest):
 
 @app.post("/query", response_model=QueryResponse)
 async def query(req: QueryRequest):
+    """Voice/text question + image → focused answer.
+
+    Builds a proper [system, user(image+text)] message split for vLLM.
+    The system message frames assistant behavior; the user message
+    contains the literal question text alongside the image. This is
+    materially different from /describe, which uses a single user
+    message with a mode-specific instruction.
+
+    On success, also writes an interaction-log entry with mode="ask"
+    and the question populated, so corrections can later be PATCH-ed
+    onto the row by id (same flow as /describe-mode entries the
+    frontend logs).
+    """
     started = time.perf_counter()
-    if not req.recent_frames_b64:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "recent_frames_b64 must contain at least one frame"},
-        )
-    resized = _resize_to_max_dim(req.recent_frames_b64[-1])
-    answer = await vllm_client.describe_image(
+    resized = _resize_to_max_dim(req.image_b64)
+    response_text = await vllm_client.describe_image(
         image_b64=resized,
-        user_prompt=query_prompt(req.question),
+        user_prompt=req.question,
+        system_prompt=QUERY_SYSTEM_PROMPT,
+        max_tokens=QUERY_MAX_TOKENS,
     )
+    answer = response_text.strip()
     latency_ms = int((time.perf_counter() - started) * 1000)
-    return QueryResponse(answer=answer.strip(), latency_ms=latency_ms)
+
+    # Auto-log to JSONL. We call the interaction_log handler in-process
+    # (not over HTTP) so we share its uuid + atomic-write logic without
+    # round-tripping. Failure to log is non-fatal — the user got their
+    # answer, we just lose the row in interactions.jsonl.
+    try:
+        await interaction_log(
+            InteractionLogRequest(
+                image_b64=req.image_b64,
+                mode="ask",
+                response=answer,
+                user_correction=None,
+                question=req.question,
+            )
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "ask-mode interaction-log failed",
+            extra={"event": "ask_log_failed"},
+        )
+
+    return QueryResponse(response=answer, latency_ms=latency_ms)
 
 
 @app.post("/interaction-log", response_model=InteractionLogResponse)

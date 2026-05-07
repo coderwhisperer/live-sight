@@ -139,9 +139,23 @@ interaction data exist.
 |------|---------|-------|
 | `/shared-docker/data/interactions/2026-05-06.jsonl` | 11 | Real interactions from the 2026-05-06 phone testing session. Mix of modes (scene/navigate/read). v0 trained on the first 9 rows; rows 9-10 are post-training and a held-out reference for task 11. **Backed up in repo at `data-backup/interactions/2026-05-06.jsonl`.** |
 
-JSONL row schema: `{image_b64, mode, response, ts, user_correction|null}`.
-Each `image_b64` is the resized 768px-max-dim JPEG used for inference;
-file sizes reflect that (~85 KB per row average).
+JSONL row schema:
+`{ts, id, image_b64, mode, response, user_correction|null, question|null, correction_ts?}`.
+- `id` (uuid) — generated on first log; used to PATCH a correction onto
+  the row later via `PATCH /interaction-log/{id}`.
+- `mode` — one of `navigate` / `read` / `scene` / `ask`. The first
+  three come from `/describe`; `ask` is auto-logged from `/query`.
+- `question` — only populated for `ask`-mode rows (the user's literal
+  question). Null for the other modes, where the user prompt was
+  mode-specific and not user-supplied text.
+- `correction_ts` — added when a correction is PATCHed onto the row.
+
+Each `image_b64` is the resized 768px-max-dim JPEG used for inference
+(~85 KB per row average).
+
+Endpoints exposed by FastAPI on `0.0.0.0:8001`: `/health`, `/describe`,
+`/query`, `/interaction-log` (POST + PATCH), `/transcribe`,
+`/admin/swap-adapter`. See `backend/CLAUDE.md` for full contracts.
 
 ## Pushed to HF
 

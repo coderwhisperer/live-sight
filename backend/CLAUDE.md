@@ -85,16 +85,48 @@ POST /describe
   → { description: string, latency_ms: number }
 
 POST /query
-  { question: string, recent_frames_b64?: string[] }
-  → { answer: string, latency_ms: number }
+  { image_b64: string, question: string }
+  → { response: string, latency_ms: number }
 
 POST /interaction-log
-  { image_b64, mode, response, user_correction?: string }
-  → { logged: true }
+  { image_b64, mode, response, user_correction?: string, question?: string }
+  → { logged: true, id: string }
+
+PATCH /interaction-log/{id}
+  { user_correction: string }
+  → { ok: true, id: string }
+
+POST /transcribe
+  multipart audio file → { transcript, language, language_probability,
+                           duration_s, latency_ms }
 
 GET /health
   → { status: "ok", model: string, adapter_version: string }
+
+POST /admin/swap-adapter
+  { adapter_path: string|null, adapter_name, version }
+  → { active, version, loaded_into_vllm: bool }
 ```
+
+### `/query` message structure
+
+`/query` sends a proper `[system, user(image+text)]` message split to
+vLLM. The system message frames assistant behavior; the user message
+contains the literal question alongside the image. This is materially
+different from `/describe`, which uses a single user message with a
+mode-specific instruction.
+
+The system prompt (`QUERY_SYSTEM_PROMPT` in `inference/prompts.py`)
+tells the model to answer the *specific* question, be brief, and
+acknowledge when the image lacks information. Earlier drafts wrapped
+the question in a sentence ("answer this question based on the image:
+{question}") and put the whole thing in the user turn — the model
+treated the framing as part of the question and answered the framing
+instead. Splitting role-vs-question was the fix.
+
+`/query` also auto-logs to JSONL with `mode="ask"` and `question`
+populated, so corrections to ask-mode answers can be PATCH-ed onto
+the row by id (same flow as describe-mode entries).
 
 ## Performance targets (demo-day)
 
