@@ -80,6 +80,12 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     response: str
     latency_ms: int
+    # id of the auto-logged interaction. Populated when /query's
+    # internal interaction-log call succeeds (the typical case);
+    # null when logging failed (still rare, non-fatal). Frontend
+    # uses this for PATCH /interaction-log/{id} to attach corrections
+    # later. Without it, corrections to ask-mode rows 404.
+    id: str | None = None
 
 
 class InteractionLogRequest(BaseModel):
@@ -251,10 +257,14 @@ async def query(req: QueryRequest):
 
     # Auto-log to JSONL. We call the interaction_log handler in-process
     # (not over HTTP) so we share its uuid + atomic-write logic without
-    # round-tripping. Failure to log is non-fatal — the user got their
-    # answer, we just lose the row in interactions.jsonl.
+    # round-tripping. Capture the returned id so the frontend can PATCH
+    # a user_correction onto this row later. Failure to log is
+    # non-fatal — the user got their answer, we just lose the row in
+    # interactions.jsonl and corrections won't have anything to attach
+    # to.
+    record_id: str | None = None
     try:
-        await interaction_log(
+        log_resp = await interaction_log(
             InteractionLogRequest(
                 image_b64=req.image_b64,
                 mode="ask",
@@ -263,13 +273,14 @@ async def query(req: QueryRequest):
                 question=req.question,
             )
         )
+        record_id = log_resp.id
     except Exception:  # noqa: BLE001
         logger.exception(
             "ask-mode interaction-log failed",
             extra={"event": "ask_log_failed"},
         )
 
-    return QueryResponse(response=answer, latency_ms=latency_ms)
+    return QueryResponse(response=answer, latency_ms=latency_ms, id=record_id)
 
 
 @app.post("/interaction-log", response_model=InteractionLogResponse)
