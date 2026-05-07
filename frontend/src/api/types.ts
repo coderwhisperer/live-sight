@@ -21,6 +21,10 @@ export interface QueryRequest {
 export interface QueryResponse {
   response: string;
   latency_ms: number;
+  // id of the auto-logged interaction-log row; null when the in-process
+  // log write fails on the backend (rare). Frontend uses this for the
+  // CorrectionUI PATCH; falls back to a client UUID if null.
+  id?: string | null;
 }
 
 export interface InteractionLogRequest {

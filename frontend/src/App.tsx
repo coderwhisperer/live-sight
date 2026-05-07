@@ -139,11 +139,11 @@ function App() {
       const result = await query({ image_b64: imageB64, question: transcript });
       setDescription(result.response);
       setLatencyMs(result.latency_ms);
-      // /query auto-logs an interaction-log row internally with mode="ask",
-      // but doesn't return its id. CorrectionUI still mounts so the user can
-      // type / dictate a correction; the PATCH will 404 against this random
-      // id until the backend exposes the real one in QueryResponse.
-      setCurrentInteractionId(crypto.randomUUID());
+      // /query auto-logs an interaction-log row server-side and now returns
+      // its id. Prefer that — fallback to a client UUID only if the backend
+      // log write failed, in which case the PATCH will 404 (acceptable: the
+      // user got their answer, we just couldn't attach a correction).
+      setCurrentInteractionId(result.id ?? crypto.randomUUID());
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(`Query failed: ${msg}`);
