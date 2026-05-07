@@ -2,9 +2,11 @@ import asyncio
 import base64
 import io
 import json
+import os
 import time
 from datetime import UTC, datetime
 from typing import Literal
+from uuid import uuid4
 
 import httpx
 from fastapi import FastAPI, File, Request, UploadFile
@@ -37,7 +39,7 @@ app = FastAPI(title="Live Sight backend", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -88,6 +90,16 @@ class InteractionLogRequest(BaseModel):
 
 class InteractionLogResponse(BaseModel):
     logged: bool
+    id: str
+
+
+class CorrectionUpdateRequest(BaseModel):
+    user_correction: str
+
+
+class CorrectionUpdateResponse(BaseModel):
+    ok: bool
+    id: str
 
 
 class HealthResponse(BaseModel):
@@ -228,10 +240,71 @@ async def interaction_log(req: InteractionLogRequest):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     today = datetime.now(UTC).strftime("%Y-%m-%d")
     path = DATA_DIR / f"{today}.jsonl"
-    record = req.model_dump() | {"ts": datetime.now(UTC).isoformat()}
+    record_id = str(uuid4())
+    record = req.model_dump() | {
+        "id": record_id,
+        "ts": datetime.now(UTC).isoformat(),
+    }
     with path.open("a") as f:
         f.write(json.dumps(record) + "\n")
-    return InteractionLogResponse(logged=True)
+    return InteractionLogResponse(logged=True, id=record_id)
+
+
+@app.patch(
+    "/interaction-log/{record_id}", response_model=CorrectionUpdateResponse
+)
+async def update_interaction(record_id: str, req: CorrectionUpdateRequest):
+    """Attach a user_correction to a previously-logged interaction.
+
+    Looks for the row in today's JSONL first, then any older daily file
+    (correction may arrive after midnight UTC). Atomic per-file rewrite
+    via a temp file + os.replace; safe against process death mid-write.
+    Single-user demo — does not lock against concurrent appends. If the
+    nightly LoRA job ever runs while corrections are still streaming in,
+    it should snapshot the file before reading.
+    """
+    if not DATA_DIR.exists():
+        return JSONResponse(
+            status_code=404, content={"error": "no interactions logged"}
+        )
+
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    today_path = DATA_DIR / f"{today}.jsonl"
+    candidates: list = [today_path] if today_path.exists() else []
+    for p in sorted(DATA_DIR.glob("*.jsonl"), reverse=True):
+        if p not in candidates:
+            candidates.append(p)
+
+    for path in candidates:
+        with path.open("r") as f:
+            lines = f.readlines()
+        new_lines: list[str] = []
+        updated = False
+        for raw in lines:
+            line = raw.rstrip("\n")
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                new_lines.append(line)
+                continue
+            if rec.get("id") == record_id:
+                rec["user_correction"] = req.user_correction
+                rec["correction_ts"] = datetime.now(UTC).isoformat()
+                updated = True
+            new_lines.append(json.dumps(rec))
+        if updated:
+            tmp = path.with_suffix(".jsonl.tmp")
+            with tmp.open("w") as f:
+                f.write("\n".join(new_lines) + "\n")
+            os.replace(tmp, path)
+            return CorrectionUpdateResponse(ok=True, id=record_id)
+
+    return JSONResponse(
+        status_code=404,
+        content={"error": f"no interaction with id {record_id}"},
+    )
 
 
 @app.post("/transcribe")

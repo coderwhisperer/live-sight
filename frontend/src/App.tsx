@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { CameraButton } from '@/components/CameraButton';
+import { CorrectionUI } from '@/components/CorrectionUI';
 import { ModeToggle } from '@/components/ModeToggle';
 import { ResponseDisplay } from '@/components/ResponseDisplay';
 import { useCamera } from '@/hooks/useCamera';
@@ -12,6 +13,9 @@ function App() {
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [inFlight, setInFlight] = useState(false);
+  const [currentInteractionId, setCurrentInteractionId] = useState<
+    string | null
+  >(null);
 
   const { status, error: cameraError, videoRef, capture } = useCamera();
 
@@ -19,6 +23,7 @@ function App() {
     if (inFlight) return;
     setInFlight(true);
     setErrorMessage(null);
+    setCurrentInteractionId(null);
     try {
       const imageB64 = await capture();
       const result = await describe({ image_b64: imageB64, mode });
@@ -26,13 +31,16 @@ function App() {
       setLatencyMs(result.latency_ms);
       // Fire-and-forget: feeds nightly LoRA training. Don't block the user
       // flow if it fails — backend writes JSONL at /shared-docker/data/interactions/.
+      // The returned id lets CorrectionUI PATCH the same row with a user_correction.
       interactionLog({
         image_b64: imageB64,
         mode,
         response: result.description,
-      }).catch((err) => {
-        console.warn('interactionLog failed:', err);
-      });
+      })
+        .then(({ id }) => setCurrentInteractionId(id))
+        .catch((err) => {
+          console.warn('interactionLog failed:', err);
+        });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(msg);
@@ -79,6 +87,15 @@ function App() {
         latencyMs={latencyMs}
         errorMessage={errorMessage}
       />
+
+      {description && currentInteractionId && (
+        <CorrectionUI
+          key={currentInteractionId}
+          originalResponse={description}
+          interactionId={currentInteractionId}
+          onClose={() => setCurrentInteractionId(null)}
+        />
+      )}
     </main>
   );
 }
