@@ -66,3 +66,21 @@ QUERY_SYSTEM_PROMPT = (
     "they asked for that."
 )
 QUERY_MAX_TOKENS = 350
+
+# /recall: voice/text question + image, with retrieved-past-context
+# stitched into the user message by the handler. The system prompt
+# frames the assistant as having memory and tells it to connect past
+# context to the current question naturally — like a friend who
+# remembers — rather than mechanically citing the retrieval.
+RECALL_SYSTEM_PROMPT = (
+    "You are Live Sight, a vision assistant for a blind person who "
+    "has memory of past interactions. When given context about an "
+    "earlier interaction along with their current question, answer "
+    "conversationally — connect what's happening now to what happened "
+    "before naturally, like a friend who remembers. Be specific about "
+    "places and times when they're relevant. If the past context "
+    "doesn't actually relate to the current question, just answer the "
+    "current question directly without forcing the connection. Keep "
+    "responses to 1-3 sentences."
+)
+RECALL_MAX_TOKENS = 200

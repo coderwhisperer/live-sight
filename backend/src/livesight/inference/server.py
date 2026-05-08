@@ -15,11 +15,13 @@ from fastapi.responses import JSONResponse
 from PIL import Image
 from pydantic import BaseModel
 
-from livesight.inference import vllm_client, whisper_client
+from livesight.inference import recall, vllm_client, whisper_client
 from livesight.inference.adapter_state import get_active, set_active
 from livesight.inference.prompts import (
     QUERY_MAX_TOKENS,
     QUERY_SYSTEM_PROMPT,
+    RECALL_MAX_TOKENS,
+    RECALL_SYSTEM_PROMPT,
     max_tokens_for,
     user_prompt_for,
 )
@@ -93,10 +95,27 @@ class InteractionLogRequest(BaseModel):
     mode: str
     response: str
     user_correction: str | None = None
-    # Populated only for ask-mode entries (logged from /query). Other
-    # modes leave it null so the JSONL row schema stays unified —
-    # `mode == "ask"` is the discriminator at read time.
+    # Populated for ask-mode entries (logged from /query) and
+    # recall-mode entries (logged from /recall). Other modes leave it
+    # null so the JSONL row schema stays unified — `mode` is the
+    # discriminator at read time.
     question: str | None = None
+
+
+class RecallRequest(BaseModel):
+    image_b64: str
+    question: str
+
+
+class RecallResponse(BaseModel):
+    response: str
+    latency_ms: int
+    id: str | None = None
+    # Surfaced for transparency / UI debugging — frontend can show
+    # "remembering: <excerpt>" affordance, and we can sanity-check at
+    # commit time that retrieval is hitting the right rows. None when
+    # no past entry crossed the similarity threshold.
+    retrieved: dict | None = None
 
 
 class InteractionLogResponse(BaseModel):
@@ -283,6 +302,123 @@ async def query(req: QueryRequest):
     return QueryResponse(response=answer, latency_ms=latency_ms, id=record_id)
 
 
+@app.post("/recall", response_model=RecallResponse)
+async def recall_endpoint(req: RecallRequest):
+    """Question + image, with retrieval over past interactions stitched in.
+
+    Searches the in-memory recall index (built from interaction JSONLs
+    at startup) for a row similar to the user's question, weighted by
+    recency. If a match clears the similarity threshold, we render its
+    `(question, response/correction, age)` into the user message as a
+    "[Earlier interaction, X hours ago]" block before the current
+    question. Otherwise the handler falls back to a regular VLM
+    answer with no past context.
+
+    System prompt frames the model as having memory and tells it to
+    weave the past context in conversationally rather than mechanically
+    citing the retrieval. Auto-logs the interaction with mode="recall"
+    so the recall corpus grows over time.
+    """
+    started = time.perf_counter()
+    resized = _resize_to_max_dim(req.image_b64)
+
+    matches = await asyncio.to_thread(
+        recall.find_relevant, req.question, 1, 0.25
+    )
+
+    retrieved: dict | None = None
+    if matches:
+        m = matches[0]
+        past = m["entry"]
+        past_response = past.get("user_correction") or past.get("response", "")
+        past_question = past.get("question") or ""
+        past_ts = past.get("ts", "")
+        try:
+            past_dt = datetime.fromisoformat(past_ts)
+            age_hours = (datetime.now(UTC) - past_dt).total_seconds() / 3600
+            if age_hours < 1:
+                time_str = "earlier today"
+            elif age_hours < 24:
+                time_str = f"about {int(age_hours)} hours ago"
+            else:
+                time_str = f"about {int(age_hours / 24)} days ago"
+        except Exception:  # noqa: BLE001
+            time_str = "earlier"
+
+        context_lines = [f"[Earlier interaction, {time_str}]"]
+        if past_question:
+            context_lines.append(f'You asked: "{past_question}"')
+        context_lines.append(
+            f"What was seen and described: {past_response}"
+        )
+        context_block = "\n".join(context_lines)
+
+        user_prompt = (
+            f"{context_block}\n\n"
+            f"[Current question]\n{req.question}\n\n"
+            "Using the earlier interaction as context if relevant, answer "
+            "the current question conversationally. Connect details "
+            "naturally — don't say \"based on the earlier interaction.\" "
+            "Just answer like a friend who remembers what happened."
+        )
+        retrieved = {
+            "matched_id": past.get("id"),
+            "matched_mode": past.get("mode"),
+            "matched_response_excerpt": past_response[:200],
+            "similarity": m["similarity"],
+        }
+    else:
+        user_prompt = (
+            f"[Current question]\n{req.question}\n\n"
+            "Answer based on what you can see in the image. If you don't "
+            "have enough context to answer, say so."
+        )
+
+    response_text = await vllm_client.describe_image(
+        image_b64=resized,
+        user_prompt=user_prompt,
+        system_prompt=RECALL_SYSTEM_PROMPT,
+        max_tokens=RECALL_MAX_TOKENS,
+    )
+    answer = response_text.strip()
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    record_id: str | None = None
+    try:
+        log_resp = await interaction_log(
+            InteractionLogRequest(
+                image_b64=req.image_b64,
+                mode="recall",
+                response=answer,
+                user_correction=None,
+                question=req.question,
+            )
+        )
+        record_id = log_resp.id
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "recall interaction-log failed",
+            extra={"event": "recall_log_failed"},
+        )
+
+    return RecallResponse(
+        response=answer,
+        latency_ms=latency_ms,
+        id=record_id,
+        retrieved=retrieved,
+    )
+
+
+@app.post("/admin/refresh-recall")
+async def refresh_recall_index():
+    """Re-read JSONL files and rebuild the recall index. Useful during
+    testing when seeded entries need to become searchable, and after
+    long sessions where many new interactions have accumulated since
+    startup."""
+    count = await asyncio.to_thread(recall.refresh)
+    return {"indexed": count}
+
+
 @app.post("/interaction-log", response_model=InteractionLogResponse)
 async def interaction_log(req: InteractionLogRequest):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -387,4 +523,24 @@ async def warm_whisper():
         logger.warning(
             f"whisper pre-load failed: {e}",
             extra={"event": "whisper_warmup_failed"},
+        )
+
+
+@app.on_event("startup")
+async def warm_recall():
+    """Build the recall index at startup. /recall calls before this
+    finishes will return empty retrievals (treated as no-match) and
+    fall back to direct answering — non-fatal."""
+    try:
+        t0 = time.time()
+        n = await asyncio.to_thread(recall.refresh)
+        logger.info(
+            f"recall index ready in {time.time() - t0:.1f}s "
+            f"({n} entries)",
+            extra={"event": "recall_warmup_ok"},
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            f"recall startup failed: {e}",
+            extra={"event": "recall_warmup_failed"},
         )

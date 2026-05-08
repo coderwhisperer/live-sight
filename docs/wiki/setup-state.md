@@ -38,6 +38,7 @@ Logs live at `/shared-docker/logs/`.
 | vLLM    | rocm container | 8000 (internal only)   | running (pid 3639 in container, with `--enable-lora`)       | `/shared-docker/logs/vllm.log`                                     |
 | FastAPI | host           | 8001 (public)          | running (host PID at `/shared-docker/logs/api.pid`, was 289378). Endpoints now include `/transcribe` (Whisper STT). | `/shared-docker/logs/api.log` + `/shared-docker/logs/api.stdout.log` |
 | Whisper | host (in-FastAPI process) | (no port — in-process)  | loaded once at FastAPI startup (~3.6s warm), serves `/transcribe`. CPU/int8, ~2 GB RSS. | shared with FastAPI — `livesight.whisper` logger writes to `api.log` |
+| Recall (MiniLM) | host (in-FastAPI process) | (no port — in-process) | loaded once at FastAPI startup (~2.3s warm); index of all interaction JSONLs built at startup (40-ish entries → ~0.5s). Serves `/recall` + `/admin/refresh-recall`. CPU, ~120 MB host RAM. | shared with FastAPI — `livesight.recall` logger writes to `api.log` |
 | Training| rocm container | —                      | idle (no nightly job yet)                                    | —                                                                  |
 
 vLLM args in use: `vllm serve /shared-docker/models/qwen3-vl-8b --served-model-name qwen2-vl --port 8000 --max-model-len 4096 --dtype bfloat16 --enable-lora --max-loras 2 --max-lora-rank 16`,
@@ -143,8 +144,10 @@ JSONL row schema:
 `{ts, id, image_b64, mode, response, user_correction|null, question|null, correction_ts?}`.
 - `id` (uuid) — generated on first log; used to PATCH a correction onto
   the row later via `PATCH /interaction-log/{id}`.
-- `mode` — one of `navigate` / `read` / `scene` / `ask`. The first
-  three come from `/describe`; `ask` is auto-logged from `/query`.
+- `mode` — one of `navigate` / `read` / `scene` / `ask` / `recall`. The
+  first three come from `/describe`; `ask` is auto-logged from
+  `/query`; `recall` is auto-logged from `/recall` (so recall-mode
+  answers themselves become retrievable on later queries).
 - `question` — only populated for `ask`-mode rows (the user's literal
   question). Null for the other modes, where the user prompt was
   mode-specific and not user-supplied text.

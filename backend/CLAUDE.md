@@ -100,6 +100,15 @@ POST /transcribe
   multipart audio file → { transcript, language, language_probability,
                            duration_s, latency_ms }
 
+POST /recall
+  { image_b64: string, question: string }
+  → { response: string, latency_ms: number, id: string|null,
+      retrieved: { matched_id, matched_mode, matched_response_excerpt,
+                   similarity } | null }
+
+POST /admin/refresh-recall
+  → { indexed: number }      # rebuild recall index from JSONL on disk
+
 GET /health
   → { status: "ok", model: string, adapter_version: string }
 
@@ -127,6 +136,44 @@ instead. Splitting role-vs-question was the fix.
 `/query` also auto-logs to JSONL with `mode="ask"` and `question`
 populated, so corrections to ask-mode answers can be PATCH-ed onto
 the row by id (same flow as describe-mode entries).
+
+### `/recall`: RAG over past interactions
+
+`/recall` is `/query` with retrieval. At FastAPI startup,
+`livesight.inference.recall` reads every interaction JSONL and
+embeds the searchable text (response + user_correction + question)
+with `paraphrase-multilingual-MiniLM-L12-v2` — a small CPU-friendly
+multilingual encoder that handles English and Roman Urdu in the
+same embedding space. The query is embedded the same way and matched
+with cosine similarity, weighted by recency (48-hour exponential
+decay so a slightly-less-similar but very recent memory beats a
+more-similar week-old one).
+
+If a match clears the similarity threshold (0.25), its
+`(question, response, age)` is stitched into the user message as a
+"[Earlier interaction, X hours ago]" block before the current
+question. If no match clears the threshold, the handler falls back
+to a regular VLM answer with no past context.
+
+The system prompt frames the model as having memory and tells it to
+weave the context in conversationally — *"like a friend who
+remembers"* — rather than mechanically citing the retrieval. The
+match metadata is also surfaced in the response's `retrieved` field
+for UI debugging / "remembering: …" affordances.
+
+Memory cost: ~120 MB host RAM for the encoder, ~1.5 KB per indexed
+row (384-dim float32 embeddings). At our scale (low hundreds of
+rows) no need for sqlite-vss / faiss yet. CPU inference is ~1 ms
+per query, ~ms-scale to embed the full corpus at startup.
+
+`/admin/refresh-recall` rebuilds the in-memory index from the JSONL
+files on disk. Useful during testing when seeded entries need to
+become searchable, and after long sessions where many new
+interactions have accumulated since startup.
+
+Recall calls auto-log with `mode="recall"` so the corpus grows over
+time and recall-mode answers are themselves retrievable on later
+queries.
 
 ## Performance targets (demo-day)
 
