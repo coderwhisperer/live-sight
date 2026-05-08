@@ -62,8 +62,9 @@ served by [vLLM](https://github.com/vllm-project/vllm). STT via local
 [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for voice input and
 corrections. LoRA adapters for per-user personalization, hot-swappable in vLLM
 via its runtime adapter API. Semantic retrieval via
-[sentence-transformers MiniLM](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
-over the day's interaction log. FastAPI orchestrates the backend; React + Vite
+[multilingual MiniLM](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2)
+over the day's interaction log — the multilingual variant so Roman Urdu and
+English share an embedding space. FastAPI orchestrates the backend; React + Vite
 + cloudflared tunnel + Hugging Face Static Space for the frontend.
 
 Backend endpoints:
