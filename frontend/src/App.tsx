@@ -8,9 +8,11 @@ import {
   describe,
   interactionLog,
   query,
+  recall,
   transcribeAudio,
 } from '@/api/client';
 import type { Mode } from '@/api/types';
+import { looksLikeRecall } from '@/lib/recallIntent';
 
 function App() {
   const [mode, setMode] = useState<Mode>('scene');
@@ -22,6 +24,7 @@ function App() {
   const [currentInteractionId, setCurrentInteractionId] = useState<
     string | null
   >(null);
+  const [wasRecall, setWasRecall] = useState(false);
 
   const { status, error: cameraError, videoRef, capture } = useCamera();
 
@@ -36,6 +39,7 @@ function App() {
     setErrorMessage(null);
     setCurrentInteractionId(null);
     setQuestion(null);
+    setWasRecall(false);
     try {
       const imageB64 = await capture();
       const result = await describe({ image_b64: imageB64, mode });
@@ -68,6 +72,7 @@ function App() {
     setErrorMessage(null);
     setCurrentInteractionId(null);
     setQuestion(null);
+    setWasRecall(false);
     try {
       // Capture the photo at press start so the picture matches the moment
       // the user begins speaking — not several seconds later when they let
@@ -136,14 +141,24 @@ function App() {
 
     setPhase('querying');
     try {
-      const result = await query({ image_b64: imageB64, question: transcript });
+      // Heuristic intent routing: "where did I put my keys" / "kahan rakhi thi"
+      // → /recall (semantic retrieval over past JSONL rows). Anything else →
+      // /query (vision call on the current frame). False positives just add
+      // retrieval latency; /recall still answers from the same image when no
+      // good match is found.
+      const isRecall = looksLikeRecall(transcript);
+      const result = isRecall
+        ? await recall({ image_b64: imageB64, question: transcript })
+        : await query({ image_b64: imageB64, question: transcript });
+
       setDescription(result.response);
       setLatencyMs(result.latency_ms);
-      // /query auto-logs an interaction-log row server-side and now returns
-      // its id. Prefer that — fallback to a client UUID only if the backend
-      // log write failed, in which case the PATCH will 404 (acceptable: the
-      // user got their answer, we just couldn't attach a correction).
       setCurrentInteractionId(result.id ?? crypto.randomUUID());
+      setWasRecall(isRecall);
+
+      if (isRecall && 'retrieved' in result && result.retrieved) {
+        console.log('Recall matched:', result.retrieved);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(`Query failed: ${msg}`);
@@ -193,6 +208,7 @@ function App() {
         latencyMs={latencyMs}
         errorMessage={errorMessage}
         question={question}
+        wasRecall={wasRecall}
       />
 
       {description && currentInteractionId && (

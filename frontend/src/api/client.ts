@@ -5,6 +5,8 @@ import type {
   InteractionLogRequest,
   QueryRequest,
   QueryResponse,
+  RecallRequest,
+  RecallResponse,
   TranscribeResponse,
 } from './types';
 
@@ -29,6 +31,10 @@ export function describe(req: DescribeRequest): Promise<DescribeResponse> {
 
 export function query(req: QueryRequest): Promise<QueryResponse> {
   return postJSON('/query', req);
+}
+
+export function recall(req: RecallRequest): Promise<RecallResponse> {
+  return postJSON('/recall', req);
 }
 
 export async function interactionLog(

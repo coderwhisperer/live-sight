@@ -6,6 +6,7 @@ interface ResponseDisplayProps {
   latencyMs: number | null;
   errorMessage: string | null;
   question?: string | null;
+  wasRecall?: boolean;
 }
 
 export function ResponseDisplay({
@@ -13,6 +14,7 @@ export function ResponseDisplay({
   latencyMs,
   errorMessage,
   question,
+  wasRecall,
 }: ResponseDisplayProps) {
   const { speak } = useTTS();
 
@@ -32,6 +34,14 @@ export function ResponseDisplay({
         <p className="text-red-700">{errorMessage}</p>
       ) : description ? (
         <>
+          {wasRecall && (
+            <p
+              aria-hidden="true"
+              className="mb-2 inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700"
+            >
+              🧠 Recalled
+            </p>
+          )}
           {question && (
             <p className="mb-2 text-base text-slate-600">
               <span className="font-semibold text-slate-700">Q:</span> {question}

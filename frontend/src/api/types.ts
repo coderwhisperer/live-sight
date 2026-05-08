@@ -27,6 +27,23 @@ export interface QueryResponse {
   id?: string | null;
 }
 
+export interface RecallRequest {
+  image_b64: string;
+  question: string;
+}
+
+export interface RecallResponse {
+  response: string;
+  latency_ms: number;
+  id?: string | null;
+  retrieved?: {
+    matched_id?: string;
+    matched_mode?: string;
+    matched_response_excerpt?: string;
+    similarity?: number;
+  } | null;
+}
+
 export interface InteractionLogRequest {
   image_b64: string;
   mode: Mode;
