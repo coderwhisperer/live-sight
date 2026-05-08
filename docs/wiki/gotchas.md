@@ -180,6 +180,96 @@ better fix because it also reduces upload size and decode time.
 This is specifically the silent-audio failure mode; quiet-but-real
 speech transcribes correctly with appropriate language detection.
 
+## FastAPI restart resets AdapterState to module default (v0)
+
+**Symptom** (caught repeatedly during testing across multiple sessions):
+restart FastAPI, hit `/health`, see `model: livesight-v0, adapter_version: v0`
+even though v1 was the last-active adapter before the restart. Calls to
+`/describe` and `/query` then route through v0 silently. vLLM's `/v1/models`
+is unaffected — both adapters are still loaded inside vLLM (vLLM is a
+separate process whose registry survives FastAPI restart). Only FastAPI's
+in-process routing got reset.
+
+**Cause**: `AdapterState` in `backend/src/livesight/inference/adapter_state.py`
+is a module-level singleton with a hardcoded default of
+`AdapterState(active="livesight-v0", version="v0")`. State is in-memory
+only; nothing persists it across process restarts. Every `start-api.sh`
+wipes the runtime adapter selection.
+
+**Fix (manual)**: after every FastAPI restart that needs v1,
+```bash
+./backend/scripts/swap-adapter.sh /shared-docker/adapters/v1
+```
+Verify via `curl http://localhost:8001/health` — should report
+`adapter_version: v1`.
+
+**Real fix (deferred to task 15)**: `/health` should report vLLM's
+*truth* (which adapter the next inference call would actually route
+to) rather than `AdapterState`'s *intent*. A `/v1/models` round-trip
+in the health check would catch the divergence. Until then, treat
+post-restart `/health` output as advisory and double-check with
+`/v1/models` when it matters.
+
+## `train-lora.sh` paths must be inside `/shared-docker/` bind mount
+
+**Symptom** (caught during v1 training): wrapper's host-side preflight
+check passed for `/tmp/v1-training-data.jsonl` (file existed on the
+host), but the actual training step inside the rocm container failed
+with `ERROR: input JSONL not found at /tmp/v1-training-data.jsonl`.
+The wrapper exited cleanly without surfacing the path-mismatch cause.
+
+**Cause**: `train-lora.sh` does its `[[ ! -f "$INPUT_JSONL" ]]` check on
+the host filesystem, then dispatches the actual training to a
+`docker exec rocm` invocation that runs inside the container. Only
+`/shared-docker/` is bind-mounted into the container — `/tmp/` on
+the host is a different filesystem from `/tmp/` in the container.
+Files in host `/tmp/` are invisible inside.
+
+**Fix (workaround)**: stage training data anywhere under
+`/shared-docker/`. We use `/shared-docker/data/training-data/` for
+ad-hoc concatenations.
+```bash
+cat /shared-docker/data/interactions/*.jsonl \
+  > /shared-docker/data/training-data/v1-training-data.jsonl
+./backend/scripts/train-lora.sh \
+  /shared-docker/data/training-data/v1-training-data.jsonl \
+  /shared-docker/adapters/v1
+```
+
+**Deferred fix**: `train-lora.sh`'s preflight should refuse paths that
+aren't under `/shared-docker/` so the host-vs-container divergence
+surfaces immediately instead of as a silent crash mid-run.
+
+## Interaction-log placeholder rows crash `_load_examples`
+
+**Symptom** (caught during v1 training): `train_lora.py` died with
+`PIL.UnidentifiedImageError: cannot identify image file <_io.BytesIO
+object at 0x...>` partway through the example-loading pass. Killed the
+whole training run with no adapter produced.
+
+**Cause**: real interaction JSONLs accumulate placeholder rows from
+UI wiring tests — entries like `{"image_b64": "AAAA", "response":
+"test", ...}` where the base64 decodes to 3 zero bytes that PIL can't
+parse as an image. One such row was enough to crash the whole loader.
+
+**Fix**: `_load_examples` now wraps the `_pil_from_b64` call in a
+try/except, logs a per-row warning, and skips the row. Patched in
+`c37a345`. Don't worry if your interaction JSONL has a few of these
+from UI testing — training silently skips them, and the recall index
+filters them too (`len(image_b64) <= 100` heuristic in `recall.py`).
+
+The skip count gets logged at the start of training, e.g.:
+```
+loading examples from /shared-docker/data/training-data/v1-training-data.jsonl
+  skipping row 17: image_b64 not a valid image (UnidentifiedImageError: …)
+  skipped 1 rows due to invalid images
+  25 examples
+```
+
+If many rows skip, that's a signal to clean the JSONL before training —
+not all UI test rows are placeholders, some are real-image rows with
+nonsense responses that *shouldn't* train.
+
 ## Recovery playbook gap: data-backup needed manual restoration
 
 **Symptom** (hit 2026-05-06, second recovery cycle): after a fresh

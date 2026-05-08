@@ -396,5 +396,87 @@ comparison results to `data-backup/comparisons/v1-vs-v0-vs-base.md`.
 feature ties this whole loop together (record → /transcribe →
 /interaction-log with correction → next nightly v2 training run).
 
+---
+
+### 2026-05-08 — Recall: semantic retrieval over past interactions
+
+**Tried**: built `/recall` (RAG over the user's interaction history)
+to handle "where did I put my keys"-style questions that need memory
+of earlier scenes, not just the current image.
+
+Stack:
+- `paraphrase-multilingual-MiniLM-L12-v2` from sentence-transformers,
+  loaded on CPU (~120 MB host RAM, ~2.3s cold load). Multilingual:
+  English and Roman Urdu live in the same embedding space, so a
+  query in one language can match a memory in the other.
+- New `livesight.inference.recall` module: builds an in-memory index
+  of all `/shared-docker/data/interactions/*.jsonl` rows at FastAPI
+  startup. Searchable text per row is response + user_correction +
+  question.
+- Cosine similarity (vectors normalized → dot product) plus 48-hour
+  exponential recency decay. A slightly-less-similar but very
+  recent memory beats a more-similar week-old one.
+- `/recall` endpoint: top-1 retrieval at similarity ≥ 0.25, stitches
+  the matched row into a `[Earlier interaction, X hours ago]` block
+  before the current question. Falls back to direct VLM answer if
+  no match clears threshold. Auto-logs with `mode="recall"` so the
+  recall corpus grows (recall answers themselves become retrievable
+  on later queries).
+- `/admin/refresh-recall`: rebuilds the in-memory index from JSONL
+  on disk. For testing (seed entry → refresh → query) and for long
+  sessions where many interactions have accumulated since startup.
+- `RECALL_SYSTEM_PROMPT`: frames the assistant as having memory and
+  tells it to weave past context conversationally — "like a friend
+  who remembers" — rather than mechanically citing the retrieval.
+
+**Result**: working end-to-end on the demo query.
+
+  Test setup: seed an ask-mode entry with response "A living room
+  with a wooden coffee table. Keys placed on the table." and
+  question "where am I putting my keys". Refresh index. Then query
+  /recall with a paraphrase: "where did I put my keys".
+
+  Output:
+    matched at similarity 0.6700681447982788
+    response: "You left your keys on the wooden coffee table in the
+              living room earlier today."
+    latency: 630 ms (CPU embed ~1 ms, VLM ~600 ms)
+    auto-logged with mode="recall"
+
+  Demo-quality phrasing — weaves location ("wooden coffee table"),
+  setting ("living room"), and time ("earlier today") naturally
+  without saying "based on the earlier interaction." The system
+  prompt is doing its job.
+
+  Sanity check on a question with no good match in corpus
+  ("what color is the sky"): weakly retrieved a previous color
+  answer at similarity 0.52, model answered the current question
+  but acknowledged the past memory only where it made sense.
+  Doesn't force connections that aren't there.
+
+**Memory cost**: encoder ~120 MB host RAM + ~1.5 KB per indexed row
+(384 floats × 4 bytes). At low-hundreds of rows that's negligible —
+no need for sqlite-vss or faiss yet. CPU only; the MI300X stays for
+Qwen3-VL + LoRA. Recall is supporting infrastructure, like Whisper.
+
+**Frontend integration**: `cabdd43` from the laptop side — Ask-mode
+intent routing detects recall-flavored queries client-side and routes
+them to `/recall` instead of `/query`. Heuristic for now; can be
+upgraded to a proper classifier later if needed.
+
+**Recovery cycle**: today's session also opened on a fresh droplet
+(`165.245.136.231`). The 4-command playbook (clone, .env,
+restore-claude, provision) ran clean — `provision.sh`'s embedded
+`restore-data.sh` hook auto-restored both adapters and both prior
+JSONLs from `data-backup/`, no manual `cp` step needed. End-to-end
+recovery worked exactly as the playbook documented; the only
+post-recovery manual step was the AdapterState swap-to-v1 (still
+deferred to task 15 — see gotchas.md).
+
+**Next**: voice-recall closes the full loop on the phone — record →
+/transcribe → /recall (with retrieved memory) → speak → optional
+PATCH /interaction-log/{id} for corrections that feed into the next
+nightly training.
+
 
 

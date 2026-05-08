@@ -8,19 +8,40 @@ Current state of the live droplet. Update this when:
 
 ## Last updated
 
-2026-05-06 — pre-break audit. Tasks 08 (LoRA training scaffold) and 09
-(adapter hot-swap) both complete and pushed. v0 adapter + interaction
-JSONL backed up into the repo at `data-backup/`. Recovery playbook
-extended with an adapter/data restore step. HEAD: `76a3430`.
+2026-05-08 — recall feature deployed (semantic retrieval over past
+interaction JSONL via `paraphrase-multilingual-MiniLM-L12-v2`), v1
+adapter active, all three live models loaded in vLLM. HEAD: `766e376`
+(`docs(readme): correct MiniLM link — multilingual variant, not
+English-only`); the recall feature itself landed in `1201ce4`, the
+matching frontend Ask-mode routing in `cabdd43`.
 
-History: 2026-05-06 `165.245.142.107` (current, came up via recovery
-playbook); 2026-05-05 `165.245.141.6` (destroyed); 2026-05-04
-`129.212.179.191` (destroyed).
+Current droplet (`165.245.136.231`) came up via the 4-command recovery
+playbook (clone → `.env` → `restore-claude.sh` → `provision.sh`) and
+provision.sh's `restore-data.sh` hook auto-restored both adapters and
+both prior JSONLs from `data-backup/`. End-to-end recovery on a fresh
+droplet ran clean.
+
+Active adapter: `livesight-v1`. vLLM has `qwen2-vl` (base alias),
+`livesight-v0` and `livesight-v1` all loaded. Whisper-large-v3 (CPU/int8)
+and the recall MiniLM encoder both pre-loaded at FastAPI startup; the
+recall index currently holds **45 entries** (1 placeholder row filtered
+from the 46-line JSONL on disk).
+
+Public-facing tunnel: `https://rentals-logs-eagles-mysimon.trycloudflare.com`
+(via cloudflared, points at FastAPI 8001). **Tunnel URLs are ephemeral**
+— the URL above is current as of 2026-05-08 and rotates on every
+cloudflared restart. The HF Space currently bakes this URL in as a build
+arg, so any cloudflared restart requires a Space rebuild — see
+`docs/wiki/hf-space-runbook.md`.
+
+History: 2026-05-08 `165.245.136.231` (current, post-recovery);
+2026-05-06 `165.245.142.107` (destroyed); 2026-05-05 `165.245.141.6`
+(destroyed); 2026-05-04 `129.212.179.191` (destroyed).
 
 ## Droplet details
 
 - Provider: AMD Developer Cloud
-- Public IP: `165.245.142.107` (previous: `165.245.141.6`, `129.212.179.191`)
+- Public IP: `165.245.136.231` (previous: `165.245.142.107`, `165.245.141.6`, `129.212.179.191`)
 - Spec: MI300X 1-GPU, 192GB VRAM, 20 vCPU, 240GB RAM
 - Image: AMD ROCm image that ships Docker container `rocm`
   (vLLM 0.17.1+rocm700, ROCm 7, Python 3.12)
@@ -35,8 +56,8 @@ Logs live at `/shared-docker/logs/`.
 
 | Service | Where          | Port                   | Status                                                       | Log                                                                |
 |---------|----------------|------------------------|--------------------------------------------------------------|--------------------------------------------------------------------|
-| vLLM    | rocm container | 8000 (internal only)   | running (pid 3639 in container, with `--enable-lora`)       | `/shared-docker/logs/vllm.log`                                     |
-| FastAPI | host           | 8001 (public)          | running (host PID at `/shared-docker/logs/api.pid`, was 289378). Endpoints now include `/transcribe` (Whisper STT). | `/shared-docker/logs/api.log` + `/shared-docker/logs/api.stdout.log` |
+| vLLM    | rocm container | 8000 (internal only)   | running (pid 104 in container, with `--enable-lora`; v0 + v1 both loaded) | `/shared-docker/logs/vllm.log`                                     |
+| FastAPI | host           | 8001 (public)          | running (host PID at `/shared-docker/logs/api.pid`, was 23902). Endpoints: `/describe`, `/query`, `/recall`, `/admin/refresh-recall`, `/admin/swap-adapter`, `/transcribe`, `/interaction-log` (POST + PATCH), `/health`. | `/shared-docker/logs/api.log` + `/shared-docker/logs/api.stdout.log` |
 | Whisper | host (in-FastAPI process) | (no port — in-process)  | loaded once at FastAPI startup (~3.6s warm), serves `/transcribe`. CPU/int8, ~2 GB RSS. | shared with FastAPI — `livesight.whisper` logger writes to `api.log` |
 | Recall (MiniLM) | host (in-FastAPI process) | (no port — in-process) | loaded once at FastAPI startup (~2.3s warm); index of all interaction JSONLs built at startup (40-ish entries → ~0.5s). Serves `/recall` + `/admin/refresh-recall`. CPU, ~120 MB host RAM. | shared with FastAPI — `livesight.recall` logger writes to `api.log` |
 | Training| rocm container | —                      | idle (no nightly job yet)                                    | —                                                                  |
