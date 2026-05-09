@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CameraButton, type CapturePhase } from '@/components/CameraButton';
 import { CorrectionUI } from '@/components/CorrectionUI';
-import { ModeToggle } from '@/components/ModeToggle';
+import { ModePill, MODE_LABELS } from '@/components/ModePill';
 import { ResponseDisplay } from '@/components/ResponseDisplay';
 import { useCamera } from '@/hooks/useCamera';
 import {
@@ -13,6 +13,8 @@ import {
 } from '@/api/client';
 import type { Mode } from '@/api/types';
 import { looksLikeRecall } from '@/lib/recallIntent';
+import { haptic } from '@/lib/haptic';
+import { audioCue } from '@/lib/audioCues';
 
 function App() {
   const [mode, setMode] = useState<Mode>('scene');
@@ -32,24 +34,48 @@ function App() {
   const audioChunksRef = useRef<Blob[]>([]);
   const askImageB64Ref = useRef<string | null>(null);
 
-  // ── single-tap flow (navigate / read / scene) ─────────────────────────
-  const handleTap = async () => {
+  // Announce mode changes via TTS + haptic. Skip the very first render
+  // so "Scene mode" doesn't blurt out on app load.
+  const isFirstModeRender = useRef(true);
+  useEffect(() => {
+    if (isFirstModeRender.current) {
+      isFirstModeRender.current = false;
+      return;
+    }
+    haptic.modeChange();
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(`${MODE_LABELS[mode]} mode`);
+      u.rate = 1.5;
+      u.volume = 0.7;
+      window.speechSynthesis.speak(u);
+    }
+  }, [mode]);
+
+  // ── single-tap flow ─────────────────────────────────────────────────
+  // Tap fires /describe in the current mode. In Ask mode, tap falls
+  // through to scene description so the giant button is never a no-op.
+  const handleSingleTap = async () => {
     if (phase !== 'idle') return;
+    audioCue.captureStart();
     setPhase('capturing');
     setErrorMessage(null);
     setCurrentInteractionId(null);
     setQuestion(null);
     setWasRecall(false);
+    const captureMode: Mode = mode === 'ask' ? 'scene' : mode;
     try {
       const imageB64 = await capture();
-      const result = await describe({ image_b64: imageB64, mode });
+      const result = await describe({ image_b64: imageB64, mode: captureMode });
       setDescription(result.description);
       setLatencyMs(result.latency_ms);
+      audioCue.responseReady();
+      haptic.success();
       // Fire-and-forget: feeds nightly LoRA training. The returned id lets
       // CorrectionUI PATCH the same row with a user_correction.
       interactionLog({
         image_b64: imageB64,
-        mode,
+        mode: captureMode,
         response: result.description,
       })
         .then(({ id }) => setCurrentInteractionId(id))
@@ -61,12 +87,16 @@ function App() {
       setErrorMessage(msg);
       setDescription(null);
       setLatencyMs(null);
+      audioCue.error();
+      haptic.error();
     } finally {
       setPhase('idle');
     }
   };
 
-  // ── ask flow (long-press): record → transcribe → query ──────────────
+  // ── long-press flow (record → transcribe → query/recall) ────────────
+  // Available in EVERY mode now, not just Ask. CameraButton's 400ms
+  // timer decides tap vs hold and routes to the right handler.
   const handleAskStart = async () => {
     if (phase !== 'idle') return;
     setErrorMessage(null);
@@ -81,6 +111,8 @@ function App() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(`Capture failed: ${msg}`);
+      audioCue.error();
+      haptic.error();
       return;
     }
     try {
@@ -93,16 +125,23 @@ function App() {
       recorder.start();
       mediaRecorderRef.current = recorder;
       setPhase('recording');
+      audioCue.recordStart();
+      haptic.recordStart();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(`Microphone access required: ${msg}`);
       askImageB64Ref.current = null;
+      audioCue.error();
+      haptic.error();
     }
   };
 
   const handleAskEnd = async () => {
     const recorder = mediaRecorderRef.current;
     if (!recorder || recorder.state === 'inactive') return;
+
+    audioCue.recordEnd();
+    haptic.recordEnd();
 
     await new Promise<void>((resolve) => {
       recorder.onstop = () => resolve();
@@ -115,6 +154,8 @@ function App() {
     if (!imageB64) {
       setErrorMessage('No photo captured for this question');
       setPhase('idle');
+      audioCue.error();
+      haptic.error();
       return;
     }
 
@@ -129,6 +170,8 @@ function App() {
       if (!transcript) {
         setErrorMessage("Couldn't hear a question — try again.");
         setPhase('idle');
+        audioCue.error();
+        haptic.error();
         return;
       }
       setQuestion(transcript);
@@ -136,6 +179,8 @@ function App() {
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(`Transcription failed: ${msg}`);
       setPhase('idle');
+      audioCue.error();
+      haptic.error();
       return;
     }
 
@@ -143,9 +188,7 @@ function App() {
     try {
       // Heuristic intent routing: "where did I put my keys" / "kahan rakhi thi"
       // → /recall (semantic retrieval over past JSONL rows). Anything else →
-      // /query (vision call on the current frame). False positives just add
-      // retrieval latency; /recall still answers from the same image when no
-      // good match is found.
+      // /query (vision call on the current frame).
       const isRecall = looksLikeRecall(transcript);
       const result = isRecall
         ? await recall({ image_b64: imageB64, question: transcript })
@@ -155,6 +198,8 @@ function App() {
       setLatencyMs(result.latency_ms);
       setCurrentInteractionId(result.id ?? crypto.randomUUID());
       setWasRecall(isRecall);
+      audioCue.responseReady();
+      haptic.success();
 
       if (isRecall && 'retrieved' in result && result.retrieved) {
         console.log('Recall matched:', result.retrieved);
@@ -164,24 +209,41 @@ function App() {
       setErrorMessage(`Query failed: ${msg}`);
       setDescription(null);
       setLatencyMs(null);
+      audioCue.error();
+      haptic.error();
     } finally {
       setPhase('idle');
     }
   };
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col items-center gap-6 px-4 py-8">
-      <h1 className="text-3xl font-semibold text-slate-900">Live Sight</h1>
+    <main className="mx-auto flex min-h-screen max-w-3xl flex-col items-center gap-6 px-4 py-6">
+      <h1 className="text-2xl font-semibold text-slate-900">Live Sight</h1>
 
-      <ModeToggle value={mode} onChange={setMode} />
+      <ModePill value={mode} onChange={setMode} />
 
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted
-        className="w-full max-w-md rounded-lg border border-slate-300 bg-slate-100"
-      />
+      <div className="relative w-full">
+        {/* Camera preview is now a corner thumbnail, not the centerpiece —
+            sighted demo viewers can still see framing without it dominating
+            the layout for blind users. */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          aria-hidden="true"
+          className="absolute right-2 top-2 z-10 h-20 w-28 rounded-md border border-slate-300 bg-slate-100 object-cover shadow-sm"
+        />
+
+        <CameraButton
+          mode={mode}
+          phase={phase}
+          disabled={status !== 'ready'}
+          onTap={handleSingleTap}
+          onPressStart={handleAskStart}
+          onPressEnd={handleAskEnd}
+        />
+      </div>
 
       {status === 'denied' && (
         <p className="text-red-700" role="alert">
@@ -193,15 +255,6 @@ function App() {
           Camera error: {cameraError}
         </p>
       )}
-
-      <CameraButton
-        mode={mode}
-        phase={phase}
-        disabled={status !== 'ready'}
-        onTap={handleTap}
-        onPressStart={handleAskStart}
-        onPressEnd={handleAskEnd}
-      />
 
       <ResponseDisplay
         description={description}
