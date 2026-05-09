@@ -56,7 +56,7 @@ export function ModePill({ value, onChange }: ModePillProps) {
     >
       <div
         aria-live="polite"
-        className="text-center text-3xl font-semibold text-slate-900 py-1"
+        className="text-center text-4xl font-semibold text-white py-1 tracking-tight"
       >
         {MODE_LABELS[value]}
       </div>
@@ -69,9 +69,9 @@ export function ModePill({ value, onChange }: ModePillProps) {
             aria-checked={i === currentIdx}
             onClick={() => onChange(m)}
             className={cn(
-              'h-3 w-3 rounded-full transition-colors',
-              'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-500',
-              i === currentIdx ? 'bg-blue-600' : 'bg-slate-300 hover:bg-slate-400',
+              'h-2.5 w-2.5 rounded-full transition-colors',
+              'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-400',
+              i === currentIdx ? 'bg-blue-500' : 'bg-slate-500 hover:bg-slate-400',
             )}
             aria-label={`${MODE_LABELS[m]} mode`}
           />
@@ -79,7 +79,7 @@ export function ModePill({ value, onChange }: ModePillProps) {
       </div>
       <div
         aria-hidden="true"
-        className="text-center text-xs text-slate-500"
+        className="text-center text-xs text-slate-400"
       >
         swipe to change mode
       </div>

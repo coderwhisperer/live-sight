@@ -4,14 +4,15 @@ import { cn } from '@/lib/utils';
 
 export type CapturePhase =
   | 'idle'
-  | 'capturing' // single-tap modes: photo + describe in flight
-  | 'recording' // ask mode: holding mic, recording audio
-  | 'transcribing' // ask mode: audio uploaded, awaiting transcript
-  | 'querying'; // ask mode: image + transcript posted to /query
+  | 'capturing' // single-tap: photo + describe in flight
+  | 'recording' // ask flow: holding the viewfinder, recording audio
+  | 'transcribing' // ask flow: audio uploaded, awaiting transcript
+  | 'querying'; // ask flow: image + transcript posted to /query
 
 interface CameraButtonProps {
   mode: Mode;
   phase: CapturePhase;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
   disabled?: boolean;
   onTap?: () => void;
   onPressStart?: () => void;
@@ -20,21 +21,22 @@ interface CameraButtonProps {
 
 const LONG_PRESS_MS = 400;
 
-// Primary action when idle (drives the big inside-circle label).
-const PRIMARY_IDLE_LABEL: Record<Mode, string> = {
-  navigate: 'Tap to navigate',
-  read: 'Tap to read',
-  scene: 'Tap to describe',
-  ask: '🎤 Hold to ask',
+// Mode-keyed border color. Inline-styled so Tailwind's purge can't drop them.
+const MODE_BORDER: Record<Mode, string> = {
+  navigate: '#1D9E75',
+  read: '#BA7517',
+  scene: '#378ADD',
+  ask: '#7F77DD',
 };
 
-// Secondary hint below the circle when idle. Reminds the user the OTHER
-// gesture is also available.
-const SECONDARY_IDLE_LABEL: Record<Mode, string> = {
-  navigate: 'Hold to ask a question',
-  read: 'Hold to ask a question',
-  scene: 'Hold to ask a question',
-  ask: 'Tap to describe scene',
+// Idle labels split into primary (large, on top) and secondary (smaller,
+// below) inside the bottom band. In Ask mode the hold-to-ask is primary;
+// in the others, tap-to-X is primary.
+const IDLE_LABEL: Record<Mode, { primary: string; secondary: string }> = {
+  navigate: { primary: 'Tap to navigate', secondary: 'Hold to ask a question' },
+  read: { primary: 'Tap to read', secondary: 'Hold to ask a question' },
+  scene: { primary: 'Tap to describe', secondary: 'Hold to ask a question' },
+  ask: { primary: 'Hold to ask a question', secondary: 'Tap to describe' },
 };
 
 const PHASE_LABEL: Record<Exclude<CapturePhase, 'idle'>, string> = {
@@ -47,6 +49,7 @@ const PHASE_LABEL: Record<Exclude<CapturePhase, 'idle'>, string> = {
 export function CameraButton({
   mode,
   phase,
+  videoRef,
   disabled,
   onTap,
   onPressStart,
@@ -55,12 +58,11 @@ export function CameraButton({
   // Long-press detection: pointerdown starts a 400ms timer; if pointerup
   // fires before the timer, it's a tap → onTap. If the timer fires first,
   // we set isLongPress=true and call onPressStart; pointerup then calls
-  // onPressEnd.
+  // onPressEnd. Pointer-leave during a hold ends the recording cleanly so
+  // a finger sliding off the viewfinder doesn't strand the mic LED on.
   const longPressTimerRef = useRef<number | null>(null);
   const isLongPressRef = useRef(false);
 
-  // Cancel a pending timer on unmount so we don't fire onPressStart on a
-  // dead component.
   useEffect(() => {
     return () => {
       if (longPressTimerRef.current !== null) {
@@ -92,15 +94,11 @@ export function CameraButton({
       isLongPressRef.current = false;
       onPressEnd?.();
     } else {
-      // Released before the long-press threshold → it's a tap.
       onTap?.();
     }
   }
 
   function handlePointerLeave() {
-    // Finger slid off mid-press. If we'd already started a long-press,
-    // end it cleanly so the mic LED doesn't stay on. If we hadn't, just
-    // cancel the pending timer — no action fires.
     if (longPressTimerRef.current !== null) {
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
@@ -111,20 +109,29 @@ export function CameraButton({
     }
   }
 
-  const insideLabel = busy
-    ? PHASE_LABEL[phase as Exclude<CapturePhase, 'idle'>]
-    : PRIMARY_IDLE_LABEL[mode];
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (isDisabled) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onTap?.();
+    }
+  }
 
-  const outsideLabel = busy ? null : SECONDARY_IDLE_LABEL[mode];
+  const idleLabel = IDLE_LABEL[mode];
+  const primaryLabel = busy
+    ? PHASE_LABEL[phase as Exclude<CapturePhase, 'idle'>]
+    : idleLabel.primary;
+  const secondaryLabel = busy ? null : idleLabel.secondary;
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={isDisabled ? -1 : 0}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerLeave}
       onPointerCancel={handlePointerLeave}
-      disabled={isDisabled}
+      onKeyDown={handleKeyDown}
       aria-label={
         mode === 'ask'
           ? 'Hold to ask a question, tap to describe scene'
@@ -132,31 +139,52 @@ export function CameraButton({
       }
       aria-busy={busy ? 'true' : 'false'}
       aria-pressed={recording}
+      style={{ borderColor: MODE_BORDER[mode] }}
       className={cn(
-        'flex w-full flex-col items-center justify-center gap-3',
-        'rounded-2xl py-6 select-none',
-        'focus-visible:outline focus-visible:outline-4 focus-visible:outline-offset-4 focus-visible:outline-blue-300',
-        'disabled:opacity-60 disabled:cursor-not-allowed',
+        'relative w-full overflow-hidden rounded-2xl border-[3px] bg-slate-800',
+        'select-none cursor-pointer touch-none',
+        'transition-shadow shadow-lg',
+        'focus-visible:outline focus-visible:outline-4 focus-visible:outline-offset-4 focus-visible:outline-blue-400',
+        isDisabled && 'opacity-60 cursor-not-allowed',
       )}
     >
+      {/* Camera viewfinder fills the entire box at a 4:3 aspect. The
+          parent rounded corners + overflow-hidden clip the video to fit
+          the colored border frame. */}
+      <div className="aspect-[4/3] w-full bg-slate-800">
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          aria-hidden="true"
+          className="h-full w-full object-cover"
+        />
+      </div>
+
+      {/* Overlay band at the bottom of the viewfinder. Camera shows
+          through where the band isn't; backdrop-blur softens whatever
+          the camera is pointed at so the text stays legible. */}
       <div
-        aria-hidden="true"
         className={cn(
-          'flex h-60 w-60 items-center justify-center rounded-full',
-          'text-white text-2xl font-semibold shadow-lg text-center px-4',
-          'transition-transform active:scale-95',
+          'absolute inset-x-0 bottom-0 px-4 py-3 text-center',
+          'backdrop-blur-sm transition-colors',
           recording
-            ? 'bg-red-600 animate-pulse'
+            ? 'bg-red-700/70 animate-pulse'
             : busy
-              ? 'bg-blue-600 animate-pulse'
-              : 'bg-blue-600',
+              ? 'bg-black/65'
+              : 'bg-black/55',
         )}
       >
-        {insideLabel}
+        <p className="text-white text-xl font-semibold leading-tight">
+          {primaryLabel}
+        </p>
+        {secondaryLabel && (
+          <p className="mt-0.5 text-sm text-white/75 leading-tight">
+            {secondaryLabel}
+          </p>
+        )}
       </div>
-      {outsideLabel && (
-        <p className="text-base text-slate-600">{outsideLabel}</p>
-      )}
-    </button>
+    </div>
   );
 }

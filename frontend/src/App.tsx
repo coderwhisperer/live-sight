@@ -217,41 +217,26 @@ function App() {
   };
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-3xl flex-col items-center gap-6 px-4 py-6">
-      <h1 className="text-2xl font-semibold text-slate-900">Live Sight</h1>
-
+    <main className="mx-auto flex min-h-screen max-w-3xl flex-col gap-5 px-4 py-5">
       <ModePill value={mode} onChange={setMode} />
 
-      <div className="relative w-full">
-        {/* Camera preview is now a corner thumbnail, not the centerpiece —
-            sighted demo viewers can still see framing without it dominating
-            the layout for blind users. */}
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          aria-hidden="true"
-          className="absolute right-2 top-2 z-10 h-20 w-28 rounded-md border border-slate-300 bg-slate-100 object-cover shadow-sm"
-        />
-
-        <CameraButton
-          mode={mode}
-          phase={phase}
-          disabled={status !== 'ready'}
-          onTap={handleSingleTap}
-          onPressStart={handleAskStart}
-          onPressEnd={handleAskEnd}
-        />
-      </div>
+      <CameraButton
+        mode={mode}
+        phase={phase}
+        videoRef={videoRef}
+        disabled={status !== 'ready'}
+        onTap={handleSingleTap}
+        onPressStart={handleAskStart}
+        onPressEnd={handleAskEnd}
+      />
 
       {status === 'denied' && (
-        <p className="text-red-700" role="alert">
+        <p className="text-red-300" role="alert">
           {cameraError ?? 'Camera permission denied'}
         </p>
       )}
       {status === 'error' && cameraError && (
-        <p className="text-red-700" role="alert">
+        <p className="text-red-300" role="alert">
           Camera error: {cameraError}
         </p>
       )}
