@@ -33,14 +33,9 @@ function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const askImageB64Ref = useRef<string | null>(null);
-  // 30s safety timer — force-ends a runaway recording so the UI never
-  // sits in 'recording' forever if pointerup/cancel/leave all somehow miss.
+  // 60s safety timer — force-stops if the user starts an Ask recording
+  // and forgets to tap again to stop.
   const safetyTimerRef = useRef<number | null>(null);
-  // Tracks whether the user is currently pressing — independent of whether
-  // the recorder exists yet. Firefox Android fires pointercancel while
-  // getUserMedia() is awaiting permission; this flag lets handleAskStart's
-  // post-await checkpoints abort cleanly when the press already ended.
-  const isPressActiveRef = useRef(false);
 
   // Announce mode changes via TTS + haptic. Skip the very first render
   // so "Scene mode" doesn't blurt out on app load.
@@ -60,10 +55,8 @@ function App() {
     }
   }, [mode]);
 
-  // ── single-tap flow ─────────────────────────────────────────────────
-  // Tap fires /describe in the current mode. In Ask mode, tap falls
-  // through to scene description so the giant button is never a no-op.
-  const handleSingleTap = async () => {
+  // ── single-tap describe (navigate / read / scene) ───────────────────
+  const captureAndDescribe = async () => {
     if (phase !== 'idle') return;
     audioCue.captureStart();
     setPhase('capturing');
@@ -71,10 +64,9 @@ function App() {
     setCurrentInteractionId(null);
     setQuestion(null);
     setWasRecall(false);
-    const captureMode: Mode = mode === 'ask' ? 'scene' : mode;
     try {
       const imageB64 = await capture();
-      const result = await describe({ image_b64: imageB64, mode: captureMode });
+      const result = await describe({ image_b64: imageB64, mode });
       setDescription(result.description);
       setLatencyMs(result.latency_ms);
       audioCue.responseReady();
@@ -83,7 +75,7 @@ function App() {
       // CorrectionUI PATCH the same row with a user_correction.
       interactionLog({
         image_b64: imageB64,
-        mode: captureMode,
+        mode,
         response: result.description,
       })
         .then(({ id }) => setCurrentInteractionId(id))
@@ -102,68 +94,32 @@ function App() {
     }
   };
 
-  // ── long-press flow (record → transcribe → query/recall) ────────────
-  // Available in EVERY mode now, not just Ask. CameraButton's 400ms
-  // timer decides tap vs hold and routes to the right handler.
-  const handleAskStart = async () => {
-    console.log('[App] handleAskStart ENTER', { phase });
+  // ── Ask mode tap-to-toggle ──────────────────────────────────────────
+  // Tap once to start recording. Tap again to stop, transcribe, query.
+  // Long-press is gone — Android browsers fire pointercancel during it,
+  // which made the previous flow unreliable.
+  const startRecording = async () => {
+    console.log('[App] startRecording ENTER', { phase });
     if (phase !== 'idle') {
-      console.log('[App] handleAskStart: not idle, returning');
+      console.log('[App] startRecording: not idle, returning');
       return;
     }
-    // Mark the press intent up-front. Any early termination (pointercancel
-    // mid-getUserMedia, error, etc.) either flips this back to false or is
-    // caught by the post-await checkpoints below.
-    isPressActiveRef.current = true;
     setErrorMessage(null);
     setCurrentInteractionId(null);
     setQuestion(null);
     setWasRecall(false);
     try {
-      // Capture the photo at press start so the picture matches the moment
-      // the user begins speaking — not several seconds later when they let
-      // go. Stored on a ref because we need it after the await chain.
-      console.log('[App] capturing photo at press start');
+      console.log('[App] capturing photo for ask');
       askImageB64Ref.current = await capture();
       console.log('[App] photo captured', {
         size: askImageB64Ref.current?.length,
       });
-    } catch (err) {
-      console.error('[App] capture failed', err);
-      const msg = err instanceof Error ? err.message : String(err);
-      setErrorMessage(`Capture failed: ${msg}`);
-      audioCue.error();
-      haptic.error();
-      isPressActiveRef.current = false;
-      return;
-    }
 
-    // Checkpoint 1: did pointercancel/up/leave fire during photo capture?
-    if (!isPressActiveRef.current) {
-      console.log('[App] release happened during photo capture, aborting');
-      askImageB64Ref.current = null;
-      return;
-    }
-
-    try {
       console.log('[App] requesting mic stream');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       console.log('[App] mic stream acquired', {
         tracks: stream.getTracks().length,
       });
-
-      // Checkpoint 2: did pointercancel/up/leave fire during getUserMedia?
-      // This is the Firefox Android case: the browser fires pointercancel
-      // mid-permission-await. Without this check, we'd start the recorder
-      // and leave the UI in 'recording' until the safety timeout (30s).
-      if (!isPressActiveRef.current) {
-        console.log(
-          '[App] release happened during getUserMedia, stopping stream',
-        );
-        stream.getTracks().forEach((t) => t.stop());
-        askImageB64Ref.current = null;
-        return;
-      }
 
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       audioChunksRef.current = [];
@@ -176,60 +132,43 @@ function App() {
       audioCue.recordStart();
       haptic.recordStart();
       console.log('[App] recorder started, phase -> recording, state=', recorder.state);
-      // Belt-and-suspenders: if pointerup/leave/cancel all somehow miss,
-      // this fires after 30s and force-ends so the UI exits 'recording'.
-      safetyTimerRef.current = window.setTimeout(() => {
-        console.warn('[App] Safety timeout — recording over 30s, force-ending');
-        if (mediaRecorderRef.current?.state === 'recording') {
-          handleAskEnd();
-        }
-      }, 30000);
 
-      // Checkpoint 3: very narrow window — if release fired between
-      // getUserMedia resolving and recorder.start(), end immediately
-      // instead of waiting for the safety timer.
-      if (!isPressActiveRef.current) {
-        console.log('[App] release happened during recorder setup, ending now');
-        handleAskEnd();
-      }
+      // Safety net: if the user walks away or forgets to tap again, stop
+      // after 60s so the UI exits 'recording' on its own.
+      safetyTimerRef.current = window.setTimeout(() => {
+        console.warn('[App] Safety timeout — recording over 60s, force-stopping');
+        if (mediaRecorderRef.current?.state === 'recording') {
+          stopRecordingAndProcess();
+        }
+      }, 60000);
     } catch (err) {
-      console.error('[App] mic/recorder failed', err);
+      console.error('[App] startRecording ERROR', err);
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(`Microphone access required: ${msg}`);
       askImageB64Ref.current = null;
-      isPressActiveRef.current = false;
       audioCue.error();
       haptic.error();
+      setPhase('idle');
     }
   };
 
-  const handleAskEnd = async () => {
-    console.log('[App] handleAskEnd ENTER', {
+  const stopRecordingAndProcess = async () => {
+    console.log('[App] stopRecordingAndProcess ENTER', {
       phase,
       hasRecorder: !!mediaRecorderRef.current,
       recorderState: mediaRecorderRef.current?.state,
-      isPressActive: isPressActiveRef.current,
     });
 
-    // Mark the press as ended up-front, before any early returns. If
-    // handleAskStart is still mid-await, its checkpoints will see this
-    // flip and abort their setup cleanly.
-    isPressActiveRef.current = false;
-
-    const recorder = mediaRecorderRef.current;
-    if (!recorder) {
-      console.log('[App] handleAskEnd: no recorder, returning');
-      return;
-    }
-    if (recorder.state === 'inactive') {
-      console.log('[App] handleAskEnd: recorder already inactive, returning');
-      return;
-    }
-
-    // Cancel safety timer — this is the user-initiated stop, not a runaway.
     if (safetyTimerRef.current !== null) {
       clearTimeout(safetyTimerRef.current);
       safetyTimerRef.current = null;
+    }
+
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') {
+      console.log('[App] stopRecordingAndProcess: no active recorder');
+      setPhase('idle');
+      return;
     }
 
     audioCue.recordEnd();
@@ -265,7 +204,7 @@ function App() {
       const transcript = transcribeResult.transcript.trim();
       console.log('[App] transcript', { len: transcript.length });
       if (!transcript) {
-        setErrorMessage("Couldn't hear a question — try again.");
+        setErrorMessage("Couldn't hear a question — tap to record again.");
         audioCue.error();
         haptic.error();
         return;
@@ -297,7 +236,7 @@ function App() {
         console.log('Recall matched:', result.retrieved);
       }
     } catch (err) {
-      console.error('[App] handleAskEnd ERROR', err);
+      console.error('[App] stopRecordingAndProcess ERROR', err);
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(msg);
       setDescription(null);
@@ -305,15 +244,30 @@ function App() {
       audioCue.error();
       haptic.error();
     } finally {
-      console.log('[App] handleAskEnd FINALLY — resetting phase to idle');
+      console.log('[App] stopRecordingAndProcess FINALLY — phase=idle');
       setPhase('idle');
       mediaRecorderRef.current = null;
       askImageB64Ref.current = null;
-      if (safetyTimerRef.current !== null) {
-        clearTimeout(safetyTimerRef.current);
-        safetyTimerRef.current = null;
-      }
+      audioChunksRef.current = [];
     }
+  };
+
+  // ── tap dispatcher ──────────────────────────────────────────────────
+  // Single entry point from CameraButton. In Ask mode the tap toggles
+  // recording. In other modes it kicks off the describe flow.
+  const handleTap = async () => {
+    console.log('[App] handleTap', { mode, phase });
+    if (mode === 'ask') {
+      if (phase === 'idle') {
+        await startRecording();
+      } else if (phase === 'recording') {
+        await stopRecordingAndProcess();
+      }
+      // transcribing/querying: ignore — the flow is already in flight and
+      // CameraButton's isDisabled prevents the click from reaching us anyway.
+      return;
+    }
+    await captureAndDescribe();
   };
 
   return (
@@ -325,9 +279,7 @@ function App() {
         phase={phase}
         videoRef={videoRef}
         disabled={status !== 'ready'}
-        onTap={handleSingleTap}
-        onPressStart={handleAskStart}
-        onPressEnd={handleAskEnd}
+        onTap={handleTap}
       />
 
       {status === 'denied' && (
