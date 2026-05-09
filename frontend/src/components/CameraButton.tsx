@@ -151,7 +151,7 @@ export function CameraButton({
       {/* Camera viewfinder fills the entire box at a 4:3 aspect. The
           parent rounded corners + overflow-hidden clip the video to fit
           the colored border frame. */}
-      <div className="aspect-[4/3] w-full bg-slate-800">
+      <div className="aspect-[4/5] w-full bg-slate-800">
         <video
           ref={videoRef}
           autoPlay
