@@ -1,0 +1,27 @@
+import httpx
+
+from livesight.shared.config import VLLM_MODEL_NAME, VLLM_TIMEOUT_S, VLLM_URL
+
+
+async def describe_image(image_b64: str, user_prompt: str) -> str:
+    """Call vLLM with image + user prompt, return assistant text."""
+    payload = {
+        "model": VLLM_MODEL_NAME,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"},
+                    },
+                    {"type": "text", "text": user_prompt},
+                ],
+            }
+        ],
+        "max_tokens": 200,
+    }
+    async with httpx.AsyncClient(timeout=VLLM_TIMEOUT_S) as client:
+        resp = await client.post(f"{VLLM_URL}/v1/chat/completions", json=payload)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]

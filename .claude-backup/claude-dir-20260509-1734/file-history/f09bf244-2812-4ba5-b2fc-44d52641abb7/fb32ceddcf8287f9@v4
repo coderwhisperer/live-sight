@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Frontend
+frontend/.env.local
+frontend/*.local
+
+# Secrets
+.env
+*.key
+
+# Models and adapters live OUTSIDE this repo at /shared-docker/{models,adapters}/
+# (too big for git, go to HF instead). Nothing to ignore inside the repo —
+# this comment is a pointer for future-you wondering where they went.
+
+# Claude Code state — but DO commit the backup folder
+.claude/
+.claude.json
+# Note: .claude-backup/ is intentionally NOT ignored
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Personal scratch / debug scripts at repo root — keep them in the working
+# tree but out of git. Project-relevant utilities go under scripts/dev/.
+/ocr-test.sh
+/*.local.sh
