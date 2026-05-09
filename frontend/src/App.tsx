@@ -33,6 +33,9 @@ function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const askImageB64Ref = useRef<string | null>(null);
+  // 30s safety timer — force-ends a runaway recording so the UI never
+  // sits in 'recording' forever if pointerup/cancel/leave all somehow miss.
+  const safetyTimerRef = useRef<number | null>(null);
 
   // Announce mode changes via TTS + haptic. Skip the very first render
   // so "Scene mode" doesn't blurt out on app load.
@@ -98,7 +101,11 @@ function App() {
   // Available in EVERY mode now, not just Ask. CameraButton's 400ms
   // timer decides tap vs hold and routes to the right handler.
   const handleAskStart = async () => {
-    if (phase !== 'idle') return;
+    console.log('[App] handleAskStart ENTER', { phase });
+    if (phase !== 'idle') {
+      console.log('[App] handleAskStart: not idle, returning');
+      return;
+    }
     setErrorMessage(null);
     setCurrentInteractionId(null);
     setQuestion(null);
@@ -107,8 +114,13 @@ function App() {
       // Capture the photo at press start so the picture matches the moment
       // the user begins speaking — not several seconds later when they let
       // go. Stored on a ref because we need it after the await chain.
+      console.log('[App] capturing photo at press start');
       askImageB64Ref.current = await capture();
+      console.log('[App] photo captured', {
+        size: askImageB64Ref.current?.length,
+      });
     } catch (err) {
+      console.error('[App] capture failed', err);
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(`Capture failed: ${msg}`);
       audioCue.error();
@@ -116,7 +128,11 @@ function App() {
       return;
     }
     try {
+      console.log('[App] requesting mic stream');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log('[App] mic stream acquired', {
+        tracks: stream.getTracks().length,
+      });
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       audioChunksRef.current = [];
       recorder.ondataavailable = (e) => {
@@ -127,7 +143,17 @@ function App() {
       setPhase('recording');
       audioCue.recordStart();
       haptic.recordStart();
+      console.log('[App] recorder started, phase -> recording, state=', recorder.state);
+      // Belt-and-suspenders: if pointerup/leave/cancel all somehow miss,
+      // this fires after 30s and force-ends so the UI exits 'recording'.
+      safetyTimerRef.current = window.setTimeout(() => {
+        console.warn('[App] Safety timeout — recording over 30s, force-ending');
+        if (mediaRecorderRef.current?.state === 'recording') {
+          handleAskEnd();
+        }
+      }, 30000);
     } catch (err) {
+      console.error('[App] mic/recorder failed', err);
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(`Microphone access required: ${msg}`);
       askImageB64Ref.current = null;
@@ -137,55 +163,70 @@ function App() {
   };
 
   const handleAskEnd = async () => {
+    console.log('[App] handleAskEnd ENTER', {
+      phase,
+      hasRecorder: !!mediaRecorderRef.current,
+      recorderState: mediaRecorderRef.current?.state,
+    });
+
     const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === 'inactive') return;
+    if (!recorder) {
+      console.log('[App] handleAskEnd: no recorder, returning');
+      return;
+    }
+    if (recorder.state === 'inactive') {
+      console.log('[App] handleAskEnd: recorder already inactive, returning');
+      return;
+    }
+
+    // Cancel safety timer — this is the user-initiated stop, not a runaway.
+    if (safetyTimerRef.current !== null) {
+      clearTimeout(safetyTimerRef.current);
+      safetyTimerRef.current = null;
+    }
 
     audioCue.recordEnd();
     haptic.recordEnd();
 
-    await new Promise<void>((resolve) => {
-      recorder.onstop = () => resolve();
-      recorder.stop();
-    });
-    recorder.stream.getTracks().forEach((t) => t.stop());
-
-    const imageB64 = askImageB64Ref.current;
-    askImageB64Ref.current = null;
-    if (!imageB64) {
-      setErrorMessage('No photo captured for this question');
-      setPhase('idle');
-      audioCue.error();
-      haptic.error();
-      return;
-    }
-
-    setPhase('transcribing');
-    let transcript: string;
     try {
+      console.log('[App] stopping recorder...');
+      await new Promise<void>((resolve) => {
+        recorder.onstop = () => {
+          console.log('[App] recorder.onstop fired');
+          resolve();
+        };
+        recorder.stop();
+      });
+      console.log('[App] recorder stopped, stopping tracks');
+      recorder.stream.getTracks().forEach((t) => t.stop());
+
+      const imageB64 = askImageB64Ref.current;
+      if (!imageB64) {
+        console.log('[App] no photo captured, error path');
+        setErrorMessage('No photo captured for this question');
+        audioCue.error();
+        haptic.error();
+        return;
+      }
+
+      console.log('[App] phase -> transcribing');
+      setPhase('transcribing');
       const audioBlob = new Blob(audioChunksRef.current, {
         type: 'audio/webm',
       });
-      const result = await transcribeAudio(audioBlob);
-      transcript = result.transcript.trim();
+      const transcribeResult = await transcribeAudio(audioBlob);
+      const transcript = transcribeResult.transcript.trim();
+      console.log('[App] transcript', { len: transcript.length });
       if (!transcript) {
         setErrorMessage("Couldn't hear a question — try again.");
-        setPhase('idle');
         audioCue.error();
         haptic.error();
         return;
       }
       setQuestion(transcript);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setErrorMessage(`Transcription failed: ${msg}`);
-      setPhase('idle');
-      audioCue.error();
-      haptic.error();
-      return;
-    }
 
-    setPhase('querying');
-    try {
+      console.log('[App] phase -> querying');
+      setPhase('querying');
       // Heuristic intent routing: "where did I put my keys" / "kahan rakhi thi"
       // → /recall (semantic retrieval over past JSONL rows). Anything else →
       // /query (vision call on the current frame).
@@ -193,6 +234,10 @@ function App() {
       const result = isRecall
         ? await recall({ image_b64: imageB64, question: transcript })
         : await query({ image_b64: imageB64, question: transcript });
+      console.log('[App] response received', {
+        isRecall,
+        responseLen: result.response?.length,
+      });
 
       setDescription(result.response);
       setLatencyMs(result.latency_ms);
@@ -205,14 +250,22 @@ function App() {
         console.log('Recall matched:', result.retrieved);
       }
     } catch (err) {
+      console.error('[App] handleAskEnd ERROR', err);
       const msg = err instanceof Error ? err.message : String(err);
-      setErrorMessage(`Query failed: ${msg}`);
+      setErrorMessage(msg);
       setDescription(null);
       setLatencyMs(null);
       audioCue.error();
       haptic.error();
     } finally {
+      console.log('[App] handleAskEnd FINALLY — resetting phase to idle');
       setPhase('idle');
+      mediaRecorderRef.current = null;
+      askImageB64Ref.current = null;
+      if (safetyTimerRef.current !== null) {
+        clearTimeout(safetyTimerRef.current);
+        safetyTimerRef.current = null;
+      }
     }
   };
 

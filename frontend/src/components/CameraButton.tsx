@@ -75,35 +75,77 @@ export function CameraButton({
   const busy = phase !== 'idle';
   const isDisabled = disabled || (busy && !recording);
 
-  function handlePointerDown() {
-    if (isDisabled) return;
+  function handlePointerDown(e: React.PointerEvent) {
+    console.log('[CB] pointerdown', {
+      phase,
+      mode,
+      pointerType: e.pointerType,
+      pointerId: e.pointerId,
+      isPrimary: e.isPrimary,
+    });
+    if (isDisabled) {
+      console.log('[CB] pointerdown ignored — disabled');
+      return;
+    }
     isLongPressRef.current = false;
     longPressTimerRef.current = window.setTimeout(() => {
+      console.log('[CB] longpress timer fired (400ms reached)');
       isLongPressRef.current = true;
       longPressTimerRef.current = null;
       onPressStart?.();
     }, LONG_PRESS_MS);
   }
 
-  function handlePointerUp() {
+  function handlePointerUp(e: React.PointerEvent) {
+    console.log('[CB] pointerup', {
+      phase,
+      isLongPress: isLongPressRef.current,
+      hasTimer: longPressTimerRef.current !== null,
+      pointerId: e.pointerId,
+    });
     if (longPressTimerRef.current !== null) {
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     }
     if (isLongPressRef.current) {
+      console.log('[CB] -> calling onPressEnd');
       isLongPressRef.current = false;
       onPressEnd?.();
     } else {
+      console.log('[CB] -> calling onTap');
       onTap?.();
     }
   }
 
-  function handlePointerLeave() {
+  function handlePointerLeave(e: React.PointerEvent) {
+    console.log('[CB] pointerleave', {
+      phase,
+      isLongPress: isLongPressRef.current,
+      pointerId: e.pointerId,
+    });
     if (longPressTimerRef.current !== null) {
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     }
     if (isLongPressRef.current) {
+      console.log('[CB] -> calling onPressEnd from leave');
+      isLongPressRef.current = false;
+      onPressEnd?.();
+    }
+  }
+
+  function handlePointerCancel(e: React.PointerEvent) {
+    console.log('[CB] pointercancel', {
+      phase,
+      isLongPress: isLongPressRef.current,
+      pointerId: e.pointerId,
+    });
+    if (longPressTimerRef.current !== null) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (isLongPressRef.current) {
+      console.log('[CB] -> calling onPressEnd from cancel');
       isLongPressRef.current = false;
       onPressEnd?.();
     }
@@ -130,7 +172,7 @@ export function CameraButton({
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerLeave}
-      onPointerCancel={handlePointerLeave}
+      onPointerCancel={handlePointerCancel}
       onKeyDown={handleKeyDown}
       aria-label={
         mode === 'ask'
