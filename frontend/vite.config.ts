@@ -15,7 +15,7 @@ export default defineConfig({
     allowedHosts: ['.trycloudflare.com'], // accept any *.trycloudflare.com subdomain
     proxy: {
       '/api': {
-        target: 'http://165.245.136.231:8001',//'http://localhost:3001',
+        target: 'http://134.199.201.134:8001',//'http://localhost:3001',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
