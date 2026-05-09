@@ -36,6 +36,11 @@ function App() {
   // 30s safety timer — force-ends a runaway recording so the UI never
   // sits in 'recording' forever if pointerup/cancel/leave all somehow miss.
   const safetyTimerRef = useRef<number | null>(null);
+  // Tracks whether the user is currently pressing — independent of whether
+  // the recorder exists yet. Firefox Android fires pointercancel while
+  // getUserMedia() is awaiting permission; this flag lets handleAskStart's
+  // post-await checkpoints abort cleanly when the press already ended.
+  const isPressActiveRef = useRef(false);
 
   // Announce mode changes via TTS + haptic. Skip the very first render
   // so "Scene mode" doesn't blurt out on app load.
@@ -106,6 +111,10 @@ function App() {
       console.log('[App] handleAskStart: not idle, returning');
       return;
     }
+    // Mark the press intent up-front. Any early termination (pointercancel
+    // mid-getUserMedia, error, etc.) either flips this back to false or is
+    // caught by the post-await checkpoints below.
+    isPressActiveRef.current = true;
     setErrorMessage(null);
     setCurrentInteractionId(null);
     setQuestion(null);
@@ -125,14 +134,37 @@ function App() {
       setErrorMessage(`Capture failed: ${msg}`);
       audioCue.error();
       haptic.error();
+      isPressActiveRef.current = false;
       return;
     }
+
+    // Checkpoint 1: did pointercancel/up/leave fire during photo capture?
+    if (!isPressActiveRef.current) {
+      console.log('[App] release happened during photo capture, aborting');
+      askImageB64Ref.current = null;
+      return;
+    }
+
     try {
       console.log('[App] requesting mic stream');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       console.log('[App] mic stream acquired', {
         tracks: stream.getTracks().length,
       });
+
+      // Checkpoint 2: did pointercancel/up/leave fire during getUserMedia?
+      // This is the Firefox Android case: the browser fires pointercancel
+      // mid-permission-await. Without this check, we'd start the recorder
+      // and leave the UI in 'recording' until the safety timeout (30s).
+      if (!isPressActiveRef.current) {
+        console.log(
+          '[App] release happened during getUserMedia, stopping stream',
+        );
+        stream.getTracks().forEach((t) => t.stop());
+        askImageB64Ref.current = null;
+        return;
+      }
+
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       audioChunksRef.current = [];
       recorder.ondataavailable = (e) => {
@@ -152,11 +184,20 @@ function App() {
           handleAskEnd();
         }
       }, 30000);
+
+      // Checkpoint 3: very narrow window — if release fired between
+      // getUserMedia resolving and recorder.start(), end immediately
+      // instead of waiting for the safety timer.
+      if (!isPressActiveRef.current) {
+        console.log('[App] release happened during recorder setup, ending now');
+        handleAskEnd();
+      }
     } catch (err) {
       console.error('[App] mic/recorder failed', err);
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(`Microphone access required: ${msg}`);
       askImageB64Ref.current = null;
+      isPressActiveRef.current = false;
       audioCue.error();
       haptic.error();
     }
@@ -167,7 +208,13 @@ function App() {
       phase,
       hasRecorder: !!mediaRecorderRef.current,
       recorderState: mediaRecorderRef.current?.state,
+      isPressActive: isPressActiveRef.current,
     });
+
+    // Mark the press as ended up-front, before any early returns. If
+    // handleAskStart is still mid-await, its checkpoints will see this
+    // flip and abort their setup cleanly.
+    isPressActiveRef.current = false;
 
     const recorder = mediaRecorderRef.current;
     if (!recorder) {
