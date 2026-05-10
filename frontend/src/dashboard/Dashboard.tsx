@@ -39,6 +39,12 @@ export function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  // ms timestamp of the most recent successful /admin/stats fetch — drives
+  // the "updated Ns ago" header text.
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  // String form of the relative time, refreshed by a 1Hz tick below so the
+  // header increments visibly without re-fetching.
+  const [updatedAgo, setUpdatedAgo] = useState<string>('');
 
   useEffect(() => {
     let cancelled = false;
@@ -50,6 +56,7 @@ export function Dashboard() {
         if (!cancelled) {
           setStats(data);
           setError(null);
+          setLastUpdated(Date.now());
         }
       } catch (err) {
         if (!cancelled) {
@@ -64,6 +71,17 @@ export function Dashboard() {
       clearInterval(interval);
     };
   }, []);
+
+  useEffect(() => {
+    if (lastUpdated === null) {
+      setUpdatedAgo('');
+      return;
+    }
+    const tick = () => setUpdatedAgo(relativeFromNow(lastUpdated));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [lastUpdated]);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,33 +104,82 @@ export function Dashboard() {
   }, []);
 
   return (
-    <div
-      style={{
-        minHeight: '100dvh',
-        background: '#0F172A',
-        color: '#F1F5F9',
-        padding: '1.5rem 1rem',
-      }}
-    >
-      <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'baseline',
-            marginBottom: '1rem',
-          }}
-        >
-          <h2 style={{ fontSize: '20px', fontWeight: 500, margin: 0 }}>
-            Live Sight
-          </h2>
-          <a
-            href="#/"
-            style={{ fontSize: '12px', color: '#64748B', textDecoration: 'none' }}
+    <>
+      {/* Keyframe for the header live-indicator dot. Inline so the
+          dashboard route stays self-contained (no global CSS dependency)
+          and so a tree-shake doesn't drop it. */}
+      <style>{`
+        @keyframes ls-pulse {
+          0% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(0.85); }
+          100% { opacity: 1; transform: scale(1); }
+        }
+      `}</style>
+      <div
+        style={{
+          minHeight: '100dvh',
+          background: '#0F172A',
+          color: '#F1F5F9',
+          padding: '1.5rem 1rem',
+        }}
+      >
+        <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '1.25rem',
+            }}
           >
-            ← back to camera
-          </a>
-        </div>
+            <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 500 }}>
+              Live Sight
+            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                <span
+                  style={{
+                    display: 'inline-block',
+                    width: '7px',
+                    height: '7px',
+                    borderRadius: '50%',
+                    background: '#5DCAA5',
+                    animation: 'ls-pulse 2s ease-in-out infinite',
+                  }}
+                />
+                <span
+                  style={{
+                    fontSize: '11px',
+                    color: '#9FE1CB',
+                    fontWeight: 500,
+                  }}
+                >
+                  Live
+                </span>
+                {updatedAgo && (
+                  <span style={{ fontSize: '11px', color: '#64748B' }}>
+                    updated {updatedAgo}
+                  </span>
+                )}
+              </div>
+              <a
+                href="#/"
+                style={{
+                  fontSize: '11px',
+                  color: '#64748B',
+                  textDecoration: 'none',
+                }}
+              >
+                ← back to camera
+              </a>
+            </div>
+          </div>
 
         {error && !stats && (
           <div
@@ -239,18 +306,83 @@ export function Dashboard() {
               </Section>
             </TwoCol>
 
-            {/* Row 2: Mode breakdown + Recent activity */}
-            <TwoCol>
-              <Section title="Interactions by mode">
-                {Object.keys(stats.interactions.by_mode).length === 0 ? (
-                  <p style={{ fontSize: '13px', color: '#64748B', margin: 0 }}>
-                    No interactions logged yet.
-                  </p>
-                ) : (
-                  <ModeBars data={stats.interactions.by_mode} />
-                )}
-              </Section>
+            {/* Bottom grid: left column stacks Mode + Recall + System;
+                right column holds the tall Recent activity log. Both
+                columns end at roughly equal vertical position so there's
+                no dead space below the left stack. Auto-fit collapses to
+                a single column on narrow viewports. */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+                gap: '12px',
+                marginBottom: '1.5rem',
+              }}
+            >
+              {/* Left column */}
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px',
+                }}
+              >
+                <Section title="Interactions by mode">
+                  {Object.keys(stats.interactions.by_mode).length === 0 ? (
+                    <p
+                      style={{
+                        fontSize: '13px',
+                        color: '#64748B',
+                        margin: 0,
+                      }}
+                    >
+                      No interactions logged yet.
+                    </p>
+                  ) : (
+                    <ModeBars data={stats.interactions.by_mode} />
+                  )}
+                </Section>
 
+                <Section title="Recall index">
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: '24px',
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <Stat
+                      label="Indexed entries"
+                      value={stats.recall.index_size.toString()}
+                    />
+                    <Stat
+                      label="Embedding model"
+                      value="multilingual MiniLM-L12-v2"
+                    />
+                  </div>
+                </Section>
+
+                <Section title="System">
+                  <div
+                    style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}
+                  >
+                    <HealthPill label="vLLM" up={stats.system.vllm_up} />
+                    <HealthPill
+                      label="FastAPI"
+                      up={stats.system.fastapi_up}
+                    />
+                    <HealthPill
+                      label="Whisper"
+                      up={stats.system.whisper_warm}
+                    />
+                    <HealthPill label={stats.adapter.active} up={true} />
+                    <HealthPill label="Qwen3-VL-8B" up={true} />
+                    <HealthPill label="AMD MI300X" up={true} />
+                  </div>
+                </Section>
+              </div>
+
+              {/* Right column: tall Recent activity */}
               <Section title="Recent activity">
                 {activity.length === 0 ? (
                   <p style={{ fontSize: '13px', color: '#64748B', margin: 0 }}>
@@ -273,42 +405,12 @@ export function Dashboard() {
                   </div>
                 )}
               </Section>
-            </TwoCol>
-
-            {/* Row 3: Recall index + System pills */}
-            <TwoCol>
-              <Section title="Recall index">
-                <div
-                  style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}
-                >
-                  <Stat
-                    label="Indexed entries"
-                    value={stats.recall.index_size.toString()}
-                  />
-                  <Stat
-                    label="Embedding model"
-                    value="multilingual MiniLM-L12-v2"
-                  />
-                </div>
-              </Section>
-
-              <Section title="System">
-                <div
-                  style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}
-                >
-                  <HealthPill label="vLLM" up={stats.system.vllm_up} />
-                  <HealthPill label="FastAPI" up={stats.system.fastapi_up} />
-                  <HealthPill label="Whisper" up={stats.system.whisper_warm} />
-                  <HealthPill label={stats.adapter.active} up={true} />
-                  <InfoPill label="Qwen3-VL-8B" />
-                  <InfoPill label="AMD MI300X" />
-                </div>
-              </Section>
-            </TwoCol>
+            </div>
           </>
         )}
       </div>
     </div>
+    </>
   );
 }
 
@@ -449,34 +551,25 @@ function HealthPill({ label, up }: { label: string; up: boolean }) {
   );
 }
 
-// Neutral-styled pill for static system info (model name, hardware) so
-// the eye reads "this is a fact" rather than "this is up/down". No
-// status dot, muted slate background, hairline border.
-function InfoPill({ label }: { label: string }) {
-  return (
-    <span
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        background: '#1E293B',
-        color: '#94A3B8',
-        fontSize: '12px',
-        padding: '4px 10px',
-        borderRadius: '6px',
-        border: '0.5px solid #334155',
-      }}
-    >
-      {label}
-    </span>
-  );
-}
-
 // Format timestamps for the Recent activity list.
 //   today's entries  -> "14:32"
 //   older entries    -> "5/9 14:32"
 // Analyst-style scanning: HH:MM is dense, easy to skim, and naturally
 // sorts. Relative-time strings ("2m ago") drift over the 5s poll
 // cycle, which makes the eye work harder than necessary.
+// Coarse relative-time string for the header live indicator. Stops at
+// hours — any longer and the page hasn't refreshed in a way that
+// matters; the user can refresh manually.
+function relativeFromNow(ms: number): string {
+  const sec = Math.floor((Date.now() - ms) / 1000);
+  if (sec < 5) return 'just now';
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  return `${hr}h ago`;
+}
+
 function formatTime(ts: string): string {
   const d = new Date(ts);
   if (isNaN(d.getTime())) return '—';
