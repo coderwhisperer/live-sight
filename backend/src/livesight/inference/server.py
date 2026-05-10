@@ -100,6 +100,10 @@ class InteractionLogRequest(BaseModel):
     # null so the JSONL row schema stays unified — `mode` is the
     # discriminator at read time.
     question: str | None = None
+    # End-to-end response latency in milliseconds. /query and /recall
+    # auto-fill from their own timer; /describe-mode rows rely on the
+    # frontend forwarding the value it received in DescribeResponse.
+    latency_ms: int | None = None
 
 
 class RecallRequest(BaseModel):
@@ -290,6 +294,7 @@ async def query(req: QueryRequest):
                 response=answer,
                 user_correction=None,
                 question=req.question,
+                latency_ms=latency_ms,
             )
         )
         record_id = log_resp.id
@@ -392,6 +397,7 @@ async def recall_endpoint(req: RecallRequest):
                 response=answer,
                 user_correction=None,
                 question=req.question,
+                latency_ms=latency_ms,
             )
         )
         record_id = log_resp.id
