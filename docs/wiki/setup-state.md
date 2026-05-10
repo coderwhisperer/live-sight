@@ -8,24 +8,26 @@ Current state of the live droplet. Update this when:
 
 ## Last updated
 
-2026-05-08 — recall feature deployed (semantic retrieval over past
-interaction JSONL via `paraphrase-multilingual-MiniLM-L12-v2`), v1
-adapter active, all three live models loaded in vLLM. HEAD: `766e376`
-(`docs(readme): correct MiniLM link — multilingual variant, not
-English-only`); the recall feature itself landed in `1201ce4`, the
-matching frontend Ask-mode routing in `cabdd43`.
+2026-05-10 — v1.2 promoted to active via Path A (corrections-only
+training). 21 user-corrected interactions (filtered from 100 total),
+~16.8 epochs at `max_steps=100`, final mean train_loss 0.66.
+Recovers v1's hero comparison (`Kuman` / `Suud` on the study-methods
+note) AND adds RAKtherm word correction that v1 never saw, without
+breaking reading-order coherence on Test B. v1 archived as fallback,
+v1.1 retained as documented negative result.
 
 Current droplet (`165.245.136.231`) came up via the 4-command recovery
 playbook (clone → `.env` → `restore-claude.sh` → `provision.sh`) and
-provision.sh's `restore-data.sh` hook auto-restored both adapters and
-both prior JSONLs from `data-backup/`. End-to-end recovery on a fresh
-droplet ran clean.
+provision.sh's `restore-data.sh` hook auto-restored adapters and prior
+JSONLs from `data-backup/`. Sort is alphabetical, so v0 < v1 < v1_1 <
+v1_2 — fresh-droplet recovery now picks v1.2 as active automatically.
 
-Active adapter: `livesight-v1`. vLLM has `qwen2-vl` (base alias),
-`livesight-v0` and `livesight-v1` all loaded. Whisper-large-v3 (CPU/int8)
-and the recall MiniLM encoder both pre-loaded at FastAPI startup; the
-recall index currently holds **45 entries** (1 placeholder row filtered
-from the 46-line JSONL on disk).
+Active adapter: `livesight-v1_2`. vLLM has `qwen2-vl` (base alias),
+plus `livesight-v0`, `livesight-v1`, `livesight-v1_1`, `livesight-v1_2`
+all loaded. Whisper-large-v3 (CPU/int8) and the recall MiniLM encoder
+both pre-loaded at FastAPI startup; the recall index currently holds
+**100 entries** (1 placeholder row filtered from the 101-line JSONL
+on disk).
 
 Public-facing tunnel: `https://rentals-logs-eagles-mysimon.trycloudflare.com`
 (via cloudflared, points at FastAPI 8001). **Tunnel URLs are ephemeral**
@@ -153,8 +155,9 @@ interaction data exist.
 | Path | Version | Trained on | Loss | Notes |
 |------|---------|-----------|------|-------|
 | `/shared-docker/adapters/v0/` | v0 | 2026-05-06 (first 9 of `2026-05-06.jsonl`) | 0.061 final (label-masked, curve 0.27→0.004) | rank 16, 15.3M trainable params, **29 MB safetensors** (bf16). Task 08 scaffold validation run. Loaded into vLLM at runtime under name `livesight-v0`. Trainer scratch at `/shared-docker/training-runs/v0-checkpoints/`. **Backed up in repo at `data-backup/adapters/v0/`.** |
-| `/shared-docker/adapters/v1/` | v1 | 2026-05-07 (25 valid entries from both days; 5 had corrections, 20 didn't) | 0.279 mean train_loss (label-masked, curve 0.73→~0.06 with two transient spikes from shuffle) | **Active — shipped for demo.** rank 16, 15.3M trainable params, **29 MB safetensors** (bf16). Task 11 demo adapter. Trained 100 steps in 1m52s. Outcome A on read-mode-corrected entry (visibly incorporates user's edits — `Kumon→Kuman`, `Suid→Suud`); Outcome B on uncorrected entries (similar to v0, tighter style). Loaded into vLLM as `livesight-v1`; FastAPI's `AdapterState` set to it. Trainer scratch at `/shared-docker/training-runs/v1-checkpoints/` (4 step checkpoints + final). **Backed up in repo at `data-backup/adapters/v1/`.** |
-| `/shared-docker/adapters/v1_1/` | v1.1 | 2026-05-10 (88 valid entries days 06-09; 18 with corrections) | 0.799 mean train_loss (curve 2.34→~0.39 oscillating) | **Trained but NOT shipped (Outcome C).** rank 16, 29.3 MB. v1.1 lost v1's correction memorization on the demo image (Test A: `Kuman` → `Kumon`, `Suud` → `Suid` — both corrections gone) and broke reading-order coherence on a v1.1-only training image (Test B: RAKtherm sign output fragmented). Cause: 4.5 epochs over 88 examples vs v1's 16 epochs over 25 — corrections diluted by larger ask-mode-heavy dataset at same `max_steps=100`. v1 remains active. Saved as fallback at `data-backup/adapters/v1_1/` for later iteration (filter to corrected entries only, or longer training). Full evidence: `data-backup/comparisons/v1_1-vs-v1.md`. Path C also evaluated 2026-05-10 09:55 — v1.1's intermediate `checkpoint-50` failed both tests (didn't recover Test A, still fragmented on Test B). Raw output at `data-backup/comparisons/v1_2-candidate-vs-v1.raw.txt`. |
+| `/shared-docker/adapters/v1/` | v1 | 2026-05-07 (25 valid entries from both days; 5 had corrections, 20 didn't) | 0.279 mean train_loss (label-masked, curve 0.73→~0.06 with two transient spikes from shuffle) | **Fallback — superseded by v1.2 on 2026-05-10.** rank 16, 15.3M trainable params, **29 MB safetensors** (bf16). Task 11 demo adapter. Trained 100 steps in 1m52s. Outcome A on read-mode-corrected entry (visibly incorporates user's edits — `Kumon→Kuman`, `Suid→Suud`); Outcome B on uncorrected entries (similar to v0, tighter style). Loaded into vLLM as `livesight-v1`. Trainer scratch at `/shared-docker/training-runs/v1-checkpoints/` (4 step checkpoints + final). **Backed up in repo at `data-backup/adapters/v1/`.** |
+| `/shared-docker/adapters/v1_1/` | v1.1 | 2026-05-10 (88 valid entries days 06-09; 18 with corrections) | 0.799 mean train_loss (curve 2.34→~0.39 oscillating) | **Trained but NOT shipped (Outcome C).** rank 16, 29.3 MB. v1.1 lost v1's correction memorization on the demo image (Test A: `Kuman` → `Kumon`, `Suud` → `Suid` — both corrections gone) and broke reading-order coherence on a v1.1-only training image (Test B: RAKtherm sign output fragmented). Cause: 4.5 epochs over 88 examples vs v1's 16 epochs over 25 — corrections diluted by larger ask-mode-heavy dataset at same `max_steps=100`. Saved as fallback at `data-backup/adapters/v1_1/` for later iteration. Full evidence: `data-backup/comparisons/v1_1-vs-v1.md`. Path C also evaluated 2026-05-10 09:55 — v1.1's intermediate `checkpoint-50` failed both tests. Raw output at `data-backup/comparisons/v1_2-candidate-vs-v1.raw.txt`. |
+| `/shared-docker/adapters/v1_2/` | v1.2 | 2026-05-10 (21 corrections-only entries filtered from 100 total; 1 noise correction excluded) | 0.660 mean train_loss (curve 2.51→~0.05 monotonic descent) | **Active — shipped for demo (Path A success).** rank 16, 29.3 MB safetensors (bf16). Trained 100 steps in 1m44s = ~16.8 epochs over 21 examples. Test A: recovered v1's hero comparison (`Kuman` / `Suud` + dash-style formatting). Test B: learned `RAKtherm` (vs v1's `Rotherm`) AND preserved coherent reading order (v1.1 had fragmented output). Did NOT learn the second RAKtherm correction (`Pioneered`) — only the more visually distinct word-shape change was absorbed; acceptable tradeoff. Loaded into vLLM as `livesight-v1_2`; FastAPI's `AdapterState` set to it. Trainer scratch at `/shared-docker/training-runs/v1_2-checkpoints/` (4 step checkpoints + final). **Backed up in repo at `data-backup/adapters/v1_2/`** (45 MB on disk, includes tokenizer). Full evidence: `data-backup/comparisons/v1_2-vs-v1.md`. Training corpus at `data-backup/v1_2-corrections-only.jsonl`. |
 
 ## Interaction data
 

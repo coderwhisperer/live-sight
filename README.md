@@ -48,12 +48,14 @@ corrections like this, same image, greedy decode (`temperature=0.0`):
 |---|---|---|
 | base Qwen3-VL-8B | Kumon Method | Suid |
 | livesight-v0 (no corrections) | Kumon Method | Suid |
-| livesight-v1 (5 corrections) | **Kuman Method** | **Suud** |
+| livesight-v1.2 (21 corrections) | **Kuman Method** | **Suud** |
 
 The shift is toward what the user wrote — not toward what the model
-auto-produced. Twenty-five training examples, a 29 MB adapter, ~9 minutes of
-training. Full side-by-side in
-[data-backup/comparisons/v1-vs-v0-vs-base.md](data-backup/comparisons/v1-vs-v0-vs-base.md).
+auto-produced. Twenty-one corrections, a 29 MB adapter, ~2 minutes of
+training. v1.2 also recovers a separate OCR fix on RAKtherm pipe-fitting
+signage (`Rotherm` → `RAKtherm`) that the user logged the same week. Full
+side-by-side in
+[data-backup/comparisons/v1_2-vs-v1.md](data-backup/comparisons/v1_2-vs-v1.md).
 
 ## Architecture
 

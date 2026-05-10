@@ -1,0 +1,111 @@
+
+========== A — study-methods note (v1 hero comparison) ==========
+expected (user_correction):
+  1. Active Recall
+-writing down every tiny thing
+we have learned and keep
+recalling them
+2. Kuman Method
+-Learning in small powerful
+steps
+-Daily bite sized learning
+3. Spaced Repetition
+-space review over time
+-review right before forgetting
+4. Kaizen
+-1% daily improvement
+-continuous improvement th
+
+--- livesight-v1 ---
+1. Active Recall
+-writing down every tiny thing
+we have learned and keep
+recalling them
+
+2. Kuman Method
+-Learning in small powerful
+steps
+-Daily bite sized learning
+
+3. Spaced Repetition
+-space review over time
+-review right before forgetting
+
+4. Kaizen
+-1% daily improvement
+-continuous improvement through
+small consistent steps
+
+5. Suud (Art of focus)
+
+--- livesight-v1_1 ---
+1. Active Recall
+- writing down every tiny thing
+- we have learned and keep
+recalling them
+
+2. Kumon Method
+- Learning in small powerful
+steps
+- Daily bite sized learning
+
+3. Spaced Repetition
+- space review over time
+- review right before forgetting
+
+4. Kaizen
+- 1% daily improvement
+- continuous improvement through
+small consistent steps
+
+5. Suid (Art of focus)
+
+--- livesight-v1_2 ---
+1. Active Recall
+-writing down every tiny thing
+we have learned and keep
+recalling them
+2. Kuman Method
+-Learning in small powerful
+steps
+-Daily bite sized learning
+3. Spaced Repetition
+-space review over time
+-review right before forgetting
+4. Kaizen
+-1% daily improvement
+-continuous improvement through
+small consistent steps
+5. Suud (Art of focus)
+
+
+========== B — RAKtherm signage (only in v1.1+/v1.2 training) ==========
+expected (user_correction):
+  RAKtherm
+Ultimate Piping Solutions
+Pioneered
+PP-R & PEX
+ation Technology
+
+--- livesight-v1 ---
+Rotherm
+Ultimate Piping Solutions
+Powered
+PP-R & PEX
+ation Technology
+
+--- livesight-v1_1 ---
+PP-R & PEX
+Pioneered
+Ultimate Piping Solutions
+R
+therm
+ation Technology
+
+--- livesight-v1_2 ---
+RAKtherm
+Ultimate Piping Solutions
+Powered
+PP-R & PEX
+ation Technology
+

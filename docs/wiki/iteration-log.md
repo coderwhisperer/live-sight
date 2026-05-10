@@ -612,5 +612,82 @@ vLLM with `/v1/unload_lora_adapter`). `/health` still reports
 
 **Next**: ship v1. No more training before demo.
 
+---
+
+### 2026-05-10 10:46 — v1.2 promoted via Path A (corrections-only training)
+
+**Tried**: Path A from the v1.1 recovery options. Filter the
+100-interaction corpus down to user-corrected entries only, then
+train at the same `max_steps=100`. Bet: more focused gradient
+updates per correction would recover v1's hero memorization
+(which v1.1 lost to dilution) while still picking up the new
+2026-05-09 entries v1 never saw.
+
+**Corpus build**: `/shared-docker/data/v1_2-corrections-only.jsonl`,
+21 entries. Started from 22 raw corrections; excluded one as noise
+— `2026-05-09` row 33's "correction" was just the word "Thank you."
+replacing a multi-sentence scene description (mistapped submit, not
+a substantive correction; would teach the model to dismiss image
+content with a pleasantry). Mode mix: 5 read, 3 navigate, 1 scene,
+10 ask, 2 recall.
+
+**Training**: 100 steps in 1m44s. Loss curve:
+`2.51 → 2.12 → 1.83 → 0.98 → 1.21 → 0.82 → 0.76 → 0.72 → 0.25
+→ 0.43 → 0.27 → 0.42 → 0.23 → 0.18 → 0.07 → 0.12 → 0.10 → 0.05
+→ 0.06 → 0.05`. Final mean train_loss 0.660 (v1: 0.279, v1.1: 0.799).
+Each example saw ~16.8 epochs vs v1.1's 4.5.
+
+**Result: Outcome A — v1.2 wins both tests.**
+
+- Test A (study-methods note, v1's hero comparison): v1.2 reproduces
+  `Kuman Method` and `Suud (Art of focus)` AND v1's no-leading-space
+  dash style. v1.1's regression is gone.
+- Test B (RAKtherm signage, v1 never saw it): v1.2 produces
+  `RAKtherm` (intact, vs v1's `Rotherm`) with coherent reading
+  order matching v1's pattern. Did NOT learn the second correction
+  (`Powered` → `Pioneered`); only the more visually distinct
+  word-shape change was absorbed. Acceptable: net improvement
+  on the harder OCR target without sacrificing reading order.
+
+**Decision**: hot-swapped v1.2 active. v1 archived as fallback.
+v1.1 retained as documented negative result.
+
+**Why Path A worked when v1.1 didn't**: v1.1's failure was that
+70/88 entries were uncorrected auto-responses, with 50 of those
+being short ask-mode answers ("yes", "black", "a keyboard"). At
+`max_steps=100` (4.5 epochs over 88 examples), corrections got
+drowned. Filtering down to 21 actual corrections gave each one
+~16.8 epochs of focused gradient updates — enough to overfit on
+the demo target the way v1 did, without the dilution. Cost: gave
+up breadth of training data, but the demo's evidence section
+depends on overfit-style memorization, not generalization.
+
+**Backed up to repo**:
+- `data-backup/adapters/v1_2/` (45 MB, full adapter dir incl. tokenizer)
+- `data-backup/v1_2-corrections-only.jsonl` (21 entries, exact corpus)
+- `data-backup/comparisons/v1_2-vs-v1.md` (full evidence writeup)
+- `data-backup/comparisons/v1_2-vs-v1.raw.txt` (raw eval stdout)
+
+**README updated**: "Personalization" section's adapter row swapped
+from `livesight-v1 (5 corrections)` to `livesight-v1.2 (21 corrections)`,
+adapter-link pointed to the new comparison file, training time updated
+(2 min vs 9 min — smaller corpus is faster).
+
+**Dashboard updated**: `frontend/src/dashboard/trainingMetrics.ts`
+v1 marked `fallback`, v1.2 row added with `status: 'active'`. The
+laptop will pick this up on next pull and rebuild the HF Space; the
+droplet doesn't run the build itself.
+
+**Recovery script unchanged**: `restore-data.sh` already sorts
+adapter dirs alphabetically and picks the highest as active —
+`v0 < v1 < v1_1 < v1_2`, so fresh-droplet recovery now sets
+v1.2 as active automatically with no script change.
+
+**Next**: ship the demo. The v1.2 result settles the v1.1 followup —
+no Path B (longer training) or Path D (drop RAKtherm row) needed.
+Post-demo, the corrections-only pattern is the lesson to carry
+forward: dataset hygiene (dropping ask-mode noise) > more steps
+when the goal is targeted personalization.
+
 
 

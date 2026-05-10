@@ -34,8 +34,8 @@ export const ADAPTER_HISTORY: AdapterMetrics[] = [
     finalLoss: 0.279,
     adapterSizeMB: 29,
     trainingDate: '2026-05-07',
-    status: 'active',
-    note: 'Demo adapter. Hero comparison: Kumon→Kuman.',
+    status: 'fallback',
+    note: 'First demo adapter. Hero comparison: Kumon→Kuman.',
   },
   {
     version: 'v1.1',
@@ -46,6 +46,16 @@ export const ADAPTER_HISTORY: AdapterMetrics[] = [
     trainingDate: '2026-05-10',
     status: 'fallback',
     note: 'Outcome C — diluted by larger dataset. Archived.',
+  },
+  {
+    version: 'v1.2',
+    trainedOn: 21,
+    corrections: 21,
+    finalLoss: 0.66,
+    adapterSizeMB: 29,
+    trainingDate: '2026-05-10',
+    status: 'active',
+    note: 'Path A — corrections-only. Recovered v1 hero + new RAKtherm word.',
   },
 ];
 
