@@ -37,3 +37,9 @@ Thumbs.db
 /*.local.sh
 .git-credentials.claude-backup/
 .claude/
+
+# Local backups — never commit
+.claude-backup/
+.claude/
+data-backup/
+*.credentials.json
