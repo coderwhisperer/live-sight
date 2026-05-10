@@ -1,0 +1,87 @@
+---
+license: mit
+language:
+  - en
+  - ur
+task_categories:
+  - image-to-text
+  - visual-question-answering
+tags:
+  - accessibility
+  - assistive-technology
+  - personalization
+  - lora-training-data
+pretty_name: Live Sight interaction logs
+size_categories:
+  - n<1K
+---
+
+# Live Sight interaction logs (private)
+
+Real interaction logs from a single user (the project lead) using [Live Sight](https://github.com/coderwhisperer/live-sight) over five days in Karachi, Pakistan during the AMD Developer Hackathon (May 2026). Used to train the LoRA adapters at [`friendly-coder-ai/live-sight`](https://huggingface.co/friendly-coder-ai/live-sight).
+
+**This repo is private to respect user privacy.** Images contain identifiable personal spaces and may show handwritten notes, packaging, household interiors. Voice transcripts (Ask mode) are in English and Roman Urdu and may reference real names and places. Access requests should be addressed to the project team.
+
+## Structure
+
+```
+interactions/
+  2026-05-06.jsonl  ← 11 entries (project start)
+  2026-05-07.jsonl  ← 30 entries
+  2026-05-08.jsonl  ← 5 entries (droplet destroy/recreate day)
+  2026-05-09.jsonl  ← 43 entries
+  2026-05-10.jsonl  ← 14 entries (submission day)
+
+training-corpora/
+  v1-training-data.jsonl              ← 25 entries used for v1 (5 corrections)
+  v1_1-training-data.jsonl            ← 88 entries used for v1.1 (18 corrections — failed)
+  v1_2-corrections-only.jsonl         ← 21 entries used for v1.2 (corrections only — succeeded)
+```
+
+## JSONL schema
+
+Each row is one interaction:
+
+```json
+{
+  "id": "uuid",
+  "ts": "2026-05-09T14:32:11Z",
+  "mode": "scene|navigate|read|ask|recall",
+  "image_b64": "base64-encoded JPEG",
+  "question": "voice transcript (ask/recall modes only)",
+  "response": "model auto-output",
+  "user_correction": "user's edit, if provided"
+}
+```
+
+Modes:
+
+- `scene` — describe the visual scene
+- `navigate` — spatial guidance for movement
+- `read` — OCR text from image
+- `ask` — voice question about image
+- `recall` — retrieves past interactions and answers
+
+## Distribution by mode
+
+| Mode | Count |
+|------|-------|
+| ask | 53 |
+| scene | 15 |
+| recall | 14 |
+| navigate | 11 |
+| read | 9 |
+| **Total valid** | **102** |
+
+22 entries have `user_correction` (later filtered to 21 substantive ones for v1.2 training; one was excluded as user-flagged noise — see below).
+
+## Privacy notes
+
+- All photos taken by the user in their own home or public Karachi locations
+- No third parties were photographed without consent
+- One entry was excluded from v1.2 training as user-flagged noise (a "Thank you" mistapped onto a scene description)
+- Original photos contain identifiable personal context — use only with care
+
+## License
+
+MIT for the data structure and schema. Image content is © the user; access for research/reproducibility is granted on request.
