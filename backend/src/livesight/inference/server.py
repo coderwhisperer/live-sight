@@ -611,3 +611,43 @@ async def admin_stats():
             "whisper_warm": True,
         },
     }
+
+
+@app.get("/admin/recent-activity")
+async def admin_recent_activity(limit: int = 5):
+    """Last N interactions, metadata only — no transcripts/responses/images.
+
+    Powers the dashboard's live activity log. Deliberately excludes
+    question, response, and image_b64 so judges and other dashboard
+    viewers see usage patterns, not user content.
+    """
+    entries: list[dict] = []
+    if DATA_DIR.exists():
+        for path in sorted(DATA_DIR.glob("*.jsonl")):
+            try:
+                with path.open() as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            d = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if len(d.get("image_b64", "")) <= 100:
+                            continue
+                        ts = d.get("ts")
+                        if not ts:
+                            continue
+                        entries.append({
+                            "ts": ts,
+                            "mode": d.get("mode", "unknown"),
+                            "latency_ms": d.get("latency_ms"),
+                            "has_correction": bool(d.get("user_correction")),
+                        })
+            except OSError:
+                continue
+
+    entries.sort(key=lambda e: e["ts"], reverse=True)
+    recent = entries[:limit]
+    return {"count": len(recent), "entries": recent}
