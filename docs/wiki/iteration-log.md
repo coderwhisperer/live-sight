@@ -555,5 +555,62 @@ per-example corrections like v1 did at 16 epochs.
 adapter, try the corrections-only filter or longer training on
 this same dataset.
 
+---
+
+### 2026-05-10 09:55 — v1.2 Path C evaluation: step-50 checkpoint negative
+
+**Tried**: Tested v1.1's saved `checkpoint-50` (one of the four
+intermediate checkpoints saved at steps 25/50/75/100 per the v1
+training fixes) as a potential v1.2. Hypothesis: midway through
+training the corrections might have been absorbed before the
+late-stage drift that broke Test B's reading order in v1.1 final.
+
+Procedure: copied `adapter_config.json` + `adapter_model.safetensors`
+from `/shared-docker/training-runs/v1_1-checkpoints/checkpoint-50/`
+to a candidate dir at `/shared-docker/adapters/v1_2_candidate/`,
+copied tokenizer + preprocessor files from v1.1's final adapter
+(same base model, same tokenizer), loaded into vLLM via
+`/v1/load_lora_adapter` as `livesight-v1_2_candidate`, and ran
+the same Test A (study-methods note) and Test B (RAKtherm signage)
+as the v1.1 evaluation.
+
+**Result: Outcome B — failed both tests.**
+
+- Test A: v1.2_candidate produces `Kumon` and `Suid` (uncorrected)
+  — same failure as v1.1 final, no recovery of v1's hero
+  memorization (`Kuman` / `Suud`).
+- Test B: v1.2_candidate produces `Powered` (didn't even learn
+  the `Pioneered` correction that v1.1 final at least partially
+  learned), AND reading order is already fragmented at step 50
+  (`R` / `therm` split). Worst of both worlds.
+
+**Interpretation**: at this dataset size (88 examples, 50 steps =
+~2.3 epochs), corrections haven't been absorbed yet AND the
+fragmentation that hurt v1.1 final's Test B was already present.
+Step 50 isn't a sweet spot — it's underbaked on corrections AND
+already showing the same coherence drift. The drift on Test B
+isn't a late-stage artifact; it's likely tied to the new RAKtherm
+training row's tokenization/layout interacting with the small
+corpus rather than a number-of-steps issue.
+
+**Decision: keep v1 active**. v1.2_candidate cleaned up
+(`/shared-docker/adapters/v1_2_candidate/` removed, unloaded from
+vLLM with `/v1/unload_lora_adapter`). `/health` still reports
+`livesight-v1`. README not touched.
+
+**Backed up**:
+- `data-backup/comparisons/v1_2-candidate-vs-v1.raw.txt` —
+  raw stdout from the eval script for the negative-result record.
+
+**Recovery options remaining for post-demo**:
+- Path A: filter to corrected entries only (18 rows × 100 steps
+  = ~22 epochs of correction-focused training).
+- Path B: bump `max_steps` to 300 on full data for ~13.5 epochs.
+- Path D (not previously listed): retrain dropping the RAKtherm
+  row entirely, since it appears to be the source of the
+  reading-order fragmentation; verify on Test A first.
+
+**Next**: ship v1. No more training before demo.
+
 
 
