@@ -1,0 +1,167 @@
+
+========== A — v1-era (read, study notes; correction Kumon→Kuman, Suid→Suuu) ==========
+mode: read
+JSONL response (model auto-output):
+  1. Active Recall
+-writing down every tiny thing
+we have learned and keep
+recalling them
+2. Kumon Method
+-Learning in small powerful
+steps
+-Daily bite sized learning
+3. Spaced Repetition
+-space review over time
+-review right before forgetting
+4. Kaizen
+-1% daily improvement
+-continuous improvement th
+JSONL user_correction:
+  1. Active Recall
+-writing down every tiny thing
+we have learned and keep
+recalling them
+2. Kuman Method
+-Learning in small powerful
+steps
+-Daily bite sized learning
+3. Spaced Repetition
+-space review over time
+-review right before forgetting
+4. Kaizen
+-1% daily improvement
+-continuous improvement th
+
+--- qwen2-vl ---
+1. Active Recall
+- writing down every tiny thing
+- we have learned and keep
+recalling them
+
+2. Kumon Method
+- Learning in small powerful
+steps
+- Daily byte sized learning
+
+3. Spaced Repetition
+- space review over time
+- review right before forgetting
+
+4. Kaizen
+- 1% daily improvement
+- continuous improvement through
+small consistent steps
+
+5. Suid (Art of focus)
+
+--- livesight-v0 ---
+1. Active Recall
+- Writing down every tiny thing
+- we have learned and keep
+recalling them
+
+2. Kumon Method
+- Learning in small powerful
+steps
+- Daily bite sized learning
+
+3. Spaced Repetition
+- Space review over time
+- Review right before forgetting
+
+4. Kaizen
+- 1% daily improvement
+- Continuous improvement through
+Small consistent steps
+
+5. Suid (Art of focus)
+
+--- livesight-v1 ---
+1. Active Recall
+-writing down every tiny thing
+we have learned and keep
+recalling them
+
+2. Kuman Method
+-Learning in small powerful
+steps
+-Daily bite sized learning
+
+3. Spaced Repetition
+-space review over time
+-review right before forgetting
+
+4. Kaizen
+-1% daily improvement
+-continuous improvement through
+small consistent steps
+
+5. Suud (Art of focus)
+
+--- livesight-v1_1 ---
+1. Active Recall
+- writing down every tiny thing
+- we have learned and keep
+recalling them
+
+2. Kumon Method
+- Learning in small powerful
+steps
+- Daily byte sized learning
+
+3. Spaced Repetition
+- space review over time
+- review right before forgetting
+
+4. Kaizen
+- 1% daily improvement
+- continuous improvement through
+small consistent steps
+
+5. Suid (Art of focus)
+
+
+========== B — v1.1-only (read, RAKtherm signage; correction landed in 2026-05-09) ==========
+mode: read
+JSONL response (model auto-output):
+  Retherm
+Ultimate Piping Solutions
+Powered
+PP-R & PEX
+ation Technology
+JSONL user_correction:
+  RAKtherm
+Ultimate Piping Solutions
+Pioneered
+PP-R & PEX
+ation Technology
+
+--- qwen2-vl ---
+Rotherm
+Ultimate Piping Solutions
+Powered
+PP-R & PEX
+ation Technology
+
+--- livesight-v0 ---
+Rotherm
+Ultimate Piping Solutions
+Powered
+PP-R & PEX
+ation Technology
+
+--- livesight-v1 ---
+Rotherm
+Ultimate Piping Solutions
+Powered
+PP-R & PEX
+ation Technology
+
+--- livesight-v1_1 ---
+PP-R & PEX
+Pioneered
+Ultimate Piping Solutions
+R
+therm
+ation Technology
+

@@ -478,5 +478,82 @@ deferred to task 15 — see gotchas.md).
 PATCH /interaction-log/{id} for corrections that feed into the next
 nightly training.
 
+---
+
+### 2026-05-10 — v1.1 retrain on doubled data: Outcome C, NOT shipped
+
+**Tried**: train a v1.1 LoRA adapter on all 89 accumulated
+interactions (88 valid + 1 placeholder filtered) using the same
+hyperparameters as v1: rank 16, max_steps=100, label-masked CE,
+shuffle, fp32 LoRA → bf16 save. Demo deadline tomorrow night;
+the bet was that more data + more corrections (18 vs 5) would
+produce a clearer "the model learned my edits" demo.
+
+**Loss curve** (descending, with one transient spike at step 45
+similar to v1's pattern):
+- step 5:   2.34
+- step 10:  1.22
+- step 25:  1.02
+- step 50:  0.71
+- step 75:  0.46
+- step 100: 0.39
+- final mean train_loss: **0.799** (vs v1's 0.279)
+
+Higher mean than v1 because v1.1 sees 88 examples × ~4.5 epochs
+at the same step budget (vs v1's 25 × ~16 epochs). Fewer
+gradient updates per example → less overfit. In a healthier
+dataset world that's exactly what you'd want; for a demo that
+depends on overfit-style memorization of corrections, it's a
+regression.
+
+**Result: Outcome C — v1.1 is worse than v1 on the demo asset.**
+
+Test A (the v1 hero comparison: study-methods note where user
+corrected `Kumon→Kuman` and `Suid→Suuu`): v1 reproduces both
+corrections verbatim (`Kuman` and `Suud`), v1.1 reverts to the
+uncorrected `Kumon` and `Suid` — output identical to base on
+this image. The v1 hero pattern doesn't survive the retrain.
+
+Test B (a v1.1-only training image: RAKtherm pipe-fitting
+signage where user corrected `Powered → Pioneered` and
+`Retherm → RAKtherm`): v1.1 *did* learn `Pioneered` (which v1
+and base never saw), but reading order collapsed — fragmented
+output with split lines like `R\ntherm`. Worse to read aloud
+than the uncorrected version.
+
+**Decision: keep v1 active, save v1.1 as fallback, do not
+update README**. The shipped demo continues to use v1
+(`/health` reports `livesight-v1`, `AdapterState.active =
+livesight-v1`). v1.1 sits at `/shared-docker/adapters/v1_1/`
+and `data-backup/adapters/v1_1/` for later iteration.
+
+**Likely cause**: corrections diluted by the ask-mode-heavy
+majority. 50 of the 88 valid entries are ask-mode, where targets
+tend to be short factual answers ("a keyboard", "yes", "black")
+rather than the verbose read/scene targets that benefit from
+training. With only 4.5 epochs the model can't memorize
+per-example corrections like v1 did at 16 epochs.
+
+**Possible recoveries (not run today; deadline)**:
+- Bump `max_steps` to 300+ for ~13.5 epochs at this data size.
+- Filter training data to corrected entries only (18 rows × 100
+  steps = ~22 epochs of correction-focused training, loses
+  broader exposure but sharpens the demo signal).
+- Test the saved intermediate checkpoint at step 50 — might
+  still have v1's memorization without the late-stage drift on
+  Test B.
+
+**Backed up to repo**:
+- `data-backup/adapters/v1_1/` (45 MB, full adapter dir)
+- `data-backup/v1_1-training-data.jsonl` (1.9 MB, exact corpus)
+- `data-backup/comparisons/v1_1-vs-v1.md` (172-line analysis)
+- `data-backup/comparisons/v1_1-vs-v1.raw.txt` (raw stdout)
+- `data-backup/interactions/*.jsonl` already in sync from
+  the 2026-05-09 pre-destroy snapshot.
+
+**Next**: ship v1 for the demo. If post-demo we want a better
+adapter, try the corrections-only filter or longer training on
+this same dataset.
+
 
 
