@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import { API_BASE } from '@/api/client';
-import { ADAPTER_HISTORY, V1_LOSS_CURVE } from './trainingMetrics';
+import {
+  ADAPTER_HISTORY,
+  V1_1_LOSS_CURVE,
+  V1_2_LOSS_CURVE,
+  V1_LOSS_CURVE,
+} from './trainingMetrics';
 
 interface Stats {
   interactions: {
@@ -162,8 +167,39 @@ export function Dashboard() {
               </div>
             </Section>
 
-            <Section title="v1 training loss">
-              <LossCurve data={V1_LOSS_CURVE} />
+            <Section title="Training loss across adapters">
+              <LossCurves
+                series={[
+                  {
+                    name: 'v1',
+                    color: '#85B7EB',
+                    data: V1_LOSS_CURVE,
+                    dashed: true,
+                  },
+                  {
+                    name: 'v1.1 (failed)',
+                    color: '#FAC775',
+                    data: V1_1_LOSS_CURVE,
+                  },
+                  {
+                    name: 'v1.2 (active)',
+                    color: '#5DCAA5',
+                    data: V1_2_LOSS_CURVE,
+                  },
+                ]}
+              />
+              <p
+                style={{
+                  fontSize: '11px',
+                  color: '#64748B',
+                  margin: '8px 0 0',
+                  fontStyle: 'italic',
+                }}
+              >
+                v1 curve reconstructed from training-log prose (original
+                trainer_state.json was on a since-destroyed droplet); v1.1 and
+                v1.2 from trainer_state.json on this droplet.
+              </p>
             </Section>
 
             <Section title="Interactions by mode">
@@ -322,21 +358,40 @@ function HealthPill({ label, up }: { label: string; up: boolean }) {
   );
 }
 
-function LossCurve({ data }: { data: { step: number; loss: number }[] }) {
+interface LossSeries {
+  name: string;
+  color: string;
+  data: { step: number; loss: number }[];
+  dashed?: boolean;
+}
+
+function LossCurves({ series }: { series: LossSeries[] }) {
   const width = 600;
-  const height = 180;
-  const padding = { top: 10, right: 10, bottom: 24, left: 32 };
-  const maxLoss = Math.max(...data.map((d) => d.loss));
+  const height = 220;
+  const padding = { top: 16, right: 16, bottom: 36, left: 40 };
   const innerWidth = width - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
 
-  const points = data
-    .map((d, i) => {
-      const x = padding.left + (i / (data.length - 1)) * innerWidth;
-      const y = padding.top + (1 - d.loss / maxLoss) * innerHeight;
-      return `${x},${y}`;
-    })
-    .join(' ');
+  // Find global axis ranges across all series
+  const allPoints = series.flatMap((s) => s.data);
+  const maxLoss = Math.max(...allPoints.map((p) => p.loss));
+  const minStep = Math.min(...allPoints.map((p) => p.step));
+  const maxStep = Math.max(...allPoints.map((p) => p.step));
+
+  function seriesToPolyline(data: { step: number; loss: number }[]) {
+    return data
+      .map((d) => {
+        const x =
+          padding.left +
+          ((d.step - minStep) / (maxStep - minStep)) * innerWidth;
+        const y = padding.top + (1 - d.loss / maxLoss) * innerHeight;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(' ');
+  }
+
+  // Y-axis gridlines at 0, 0.5, 1.0, 1.5, 2.0, 2.5 — clip to data range
+  const yTicks = [0, 0.5, 1.0, 1.5, 2.0, 2.5].filter((v) => v <= maxLoss * 1.05);
 
   return (
     <div style={{ width: '100%', overflowX: 'auto' }}>
@@ -345,25 +400,90 @@ function LossCurve({ data }: { data: { step: number; loss: number }[] }) {
         height={height}
         style={{ display: 'block', maxWidth: '100%' }}
       >
-        <polyline points={points} fill="none" stroke="#378ADD" strokeWidth="2" />
-        <text x="4" y={padding.top + 8} fill="#94A3B8" fontSize="11">
-          {maxLoss.toFixed(2)}
-        </text>
-        <text x="4" y={padding.top + innerHeight - 2} fill="#94A3B8" fontSize="11">
-          0.00
-        </text>
-        <text x={padding.left} y={height - 6} fill="#94A3B8" fontSize="11">
-          step 0
+        {/* Y-axis gridlines + labels */}
+        {yTicks.map((tick) => {
+          const y = padding.top + (1 - tick / maxLoss) * innerHeight;
+          return (
+            <g key={tick}>
+              <line
+                x1={padding.left}
+                x2={width - padding.right}
+                y1={y}
+                y2={y}
+                stroke="#1E293B"
+                strokeWidth="0.5"
+              />
+              <text
+                x={padding.left - 6}
+                y={y + 3}
+                fill="#64748B"
+                fontSize="10"
+                textAnchor="end"
+              >
+                {tick.toFixed(1)}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* X-axis labels */}
+        <text x={padding.left} y={height - 18} fill="#64748B" fontSize="10">
+          step {minStep}
         </text>
         <text
-          x={width - padding.right - 38}
-          y={height - 6}
-          fill="#94A3B8"
-          fontSize="11"
+          x={width - padding.right - 30}
+          y={height - 18}
+          fill="#64748B"
+          fontSize="10"
         >
-          step 100
+          step {maxStep}
         </text>
+
+        {/* Series polylines */}
+        {series.map((s) => (
+          <polyline
+            key={s.name}
+            points={seriesToPolyline(s.data)}
+            fill="none"
+            stroke={s.color}
+            strokeWidth="2"
+            strokeDasharray={s.dashed ? '4,3' : undefined}
+          />
+        ))}
       </svg>
+
+      {/* Legend below chart — uses inline SVG markers so the dashed/solid
+          line style matches the curve exactly. CSS borders fight each
+          other for dashed strokes. */}
+      <div
+        style={{
+          display: 'flex',
+          gap: '16px',
+          flexWrap: 'wrap',
+          marginTop: '8px',
+          paddingLeft: `${padding.left}px`,
+        }}
+      >
+        {series.map((s) => (
+          <div
+            key={s.name}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <svg width="22" height="6" style={{ display: 'block' }}>
+              <line
+                x1="0"
+                y1="3"
+                x2="22"
+                y2="3"
+                stroke={s.color}
+                strokeWidth="2"
+                strokeDasharray={s.dashed ? '4,3' : undefined}
+              />
+            </svg>
+            <span style={{ fontSize: '12px', color: '#94A3B8' }}>{s.name}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

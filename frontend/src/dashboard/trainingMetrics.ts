@@ -84,3 +84,55 @@ export const V1_LOSS_CURVE: { step: number; loss: number }[] = [
   { step: 95, loss: 0.05 },
   { step: 100, loss: 0.06 },
 ];
+
+// v1.1 loss curve — extracted from
+// /shared-docker/training-runs/v1_1-checkpoints/checkpoint-100/trainer_state.json
+// Failed adapter: 88 examples × 4.5 epochs, corrections diluted by ask-mode majority.
+export const V1_1_LOSS_CURVE: { step: number; loss: number }[] = [
+  { step: 5, loss: 2.3385 },
+  { step: 10, loss: 1.2245 },
+  { step: 15, loss: 1.2275 },
+  { step: 20, loss: 0.9828 },
+  { step: 25, loss: 1.0169 },
+  { step: 30, loss: 0.875 },
+  { step: 35, loss: 0.8105 },
+  { step: 40, loss: 0.5819 },
+  { step: 45, loss: 0.9385 },
+  { step: 50, loss: 0.7051 },
+  { step: 55, loss: 0.6597 },
+  { step: 60, loss: 0.6585 },
+  { step: 65, loss: 0.6081 },
+  { step: 70, loss: 0.6404 },
+  { step: 75, loss: 0.4597 },
+  { step: 80, loss: 0.3538 },
+  { step: 85, loss: 0.5244 },
+  { step: 90, loss: 0.4409 },
+  { step: 95, loss: 0.5438 },
+  { step: 100, loss: 0.3905 },
+];
+
+// v1.2 loss curve — extracted from
+// /shared-docker/training-runs/v1_2-checkpoints/checkpoint-100/trainer_state.json
+// Active adapter: 21 corrections × 16.8 epochs, focused training on demo signal.
+export const V1_2_LOSS_CURVE: { step: number; loss: number }[] = [
+  { step: 5, loss: 2.5127 },
+  { step: 10, loss: 2.1172 },
+  { step: 15, loss: 1.8267 },
+  { step: 20, loss: 0.9767 },
+  { step: 25, loss: 1.2085 },
+  { step: 30, loss: 0.8238 },
+  { step: 35, loss: 0.7643 },
+  { step: 40, loss: 0.7214 },
+  { step: 45, loss: 0.2536 },
+  { step: 50, loss: 0.4294 },
+  { step: 55, loss: 0.2749 },
+  { step: 60, loss: 0.4176 },
+  { step: 65, loss: 0.2333 },
+  { step: 70, loss: 0.1816 },
+  { step: 75, loss: 0.0711 },
+  { step: 80, loss: 0.1239 },
+  { step: 85, loss: 0.1013 },
+  { step: 90, loss: 0.0516 },
+  { step: 95, loss: 0.064 },
+  { step: 100, loss: 0.0547 },
+];
