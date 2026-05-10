@@ -96,31 +96,15 @@ function App() {
 
   // ── Ask mode tap-to-toggle ──────────────────────────────────────────
   // Tap once to start recording. Tap again to stop, transcribe, query.
-  // Long-press is gone — Android browsers fire pointercancel during it,
-  // which made the previous flow unreliable.
   const startRecording = async () => {
-    console.log('[App] startRecording ENTER', { phase });
-    if (phase !== 'idle') {
-      console.log('[App] startRecording: not idle, returning');
-      return;
-    }
+    if (phase !== 'idle') return;
     setErrorMessage(null);
     setCurrentInteractionId(null);
     setQuestion(null);
     setWasRecall(false);
     try {
-      console.log('[App] capturing photo for ask');
       askImageB64Ref.current = await capture();
-      console.log('[App] photo captured', {
-        size: askImageB64Ref.current?.length,
-      });
-
-      console.log('[App] requesting mic stream');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log('[App] mic stream acquired', {
-        tracks: stream.getTracks().length,
-      });
-
       const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       audioChunksRef.current = [];
       recorder.ondataavailable = (e) => {
@@ -131,18 +115,17 @@ function App() {
       setPhase('recording');
       audioCue.recordStart();
       haptic.recordStart();
-      console.log('[App] recorder started, phase -> recording, state=', recorder.state);
 
       // Safety net: if the user walks away or forgets to tap again, stop
       // after 60s so the UI exits 'recording' on its own.
       safetyTimerRef.current = window.setTimeout(() => {
-        console.warn('[App] Safety timeout — recording over 60s, force-stopping');
+        console.warn('Safety timeout — recording over 60s, force-stopping');
         if (mediaRecorderRef.current?.state === 'recording') {
           stopRecordingAndProcess();
         }
       }, 60000);
     } catch (err) {
-      console.error('[App] startRecording ERROR', err);
+      console.error('startRecording failed:', err);
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(`Microphone access required: ${msg}`);
       askImageB64Ref.current = null;
@@ -153,12 +136,6 @@ function App() {
   };
 
   const stopRecordingAndProcess = async () => {
-    console.log('[App] stopRecordingAndProcess ENTER', {
-      phase,
-      hasRecorder: !!mediaRecorderRef.current,
-      recorderState: mediaRecorderRef.current?.state,
-    });
-
     if (safetyTimerRef.current !== null) {
       clearTimeout(safetyTimerRef.current);
       safetyTimerRef.current = null;
@@ -166,7 +143,6 @@ function App() {
 
     const recorder = mediaRecorderRef.current;
     if (!recorder || recorder.state === 'inactive') {
-      console.log('[App] stopRecordingAndProcess: no active recorder');
       setPhase('idle');
       return;
     }
@@ -175,34 +151,26 @@ function App() {
     haptic.recordEnd();
 
     try {
-      console.log('[App] stopping recorder...');
       await new Promise<void>((resolve) => {
-        recorder.onstop = () => {
-          console.log('[App] recorder.onstop fired');
-          resolve();
-        };
+        recorder.onstop = () => resolve();
         recorder.stop();
       });
-      console.log('[App] recorder stopped, stopping tracks');
       recorder.stream.getTracks().forEach((t) => t.stop());
 
       const imageB64 = askImageB64Ref.current;
       if (!imageB64) {
-        console.log('[App] no photo captured, error path');
         setErrorMessage('No photo captured for this question');
         audioCue.error();
         haptic.error();
         return;
       }
 
-      console.log('[App] phase -> transcribing');
       setPhase('transcribing');
       const audioBlob = new Blob(audioChunksRef.current, {
         type: 'audio/webm',
       });
       const transcribeResult = await transcribeAudio(audioBlob);
       const transcript = transcribeResult.transcript.trim();
-      console.log('[App] transcript', { len: transcript.length });
       if (!transcript) {
         setErrorMessage("Couldn't hear a question — tap to record again.");
         audioCue.error();
@@ -211,7 +179,6 @@ function App() {
       }
       setQuestion(transcript);
 
-      console.log('[App] phase -> querying');
       setPhase('querying');
       // Heuristic intent routing: "where did I put my keys" / "kahan rakhi thi"
       // → /recall (semantic retrieval over past JSONL rows). Anything else →
@@ -220,10 +187,6 @@ function App() {
       const result = isRecall
         ? await recall({ image_b64: imageB64, question: transcript })
         : await query({ image_b64: imageB64, question: transcript });
-      console.log('[App] response received', {
-        isRecall,
-        responseLen: result.response?.length,
-      });
 
       setDescription(result.response);
       setLatencyMs(result.latency_ms);
@@ -231,12 +194,8 @@ function App() {
       setWasRecall(isRecall);
       audioCue.responseReady();
       haptic.success();
-
-      if (isRecall && 'retrieved' in result && result.retrieved) {
-        console.log('Recall matched:', result.retrieved);
-      }
     } catch (err) {
-      console.error('[App] stopRecordingAndProcess ERROR', err);
+      console.error('stopRecordingAndProcess failed:', err);
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMessage(msg);
       setDescription(null);
@@ -244,7 +203,6 @@ function App() {
       audioCue.error();
       haptic.error();
     } finally {
-      console.log('[App] stopRecordingAndProcess FINALLY — phase=idle');
       setPhase('idle');
       mediaRecorderRef.current = null;
       askImageB64Ref.current = null;
@@ -256,7 +214,6 @@ function App() {
   // Single entry point from CameraButton. In Ask mode the tap toggles
   // recording. In other modes it kicks off the describe flow.
   const handleTap = async () => {
-    console.log('[App] handleTap', { mode, phase });
     if (mode === 'ask') {
       if (phase === 'idle') {
         await startRecording();

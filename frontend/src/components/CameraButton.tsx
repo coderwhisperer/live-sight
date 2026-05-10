@@ -53,7 +53,6 @@ export function CameraButton({
   const isDisabled = disabled || (busy && !recording);
 
   function handleClick() {
-    console.log('[CB] click', { phase, mode, disabled: isDisabled });
     if (isDisabled) return;
     onTap?.();
   }
