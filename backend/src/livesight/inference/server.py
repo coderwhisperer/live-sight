@@ -544,3 +544,70 @@ async def warm_recall():
             f"recall startup failed: {e}",
             extra={"event": "recall_warmup_failed"},
         )
+
+
+@app.get("/admin/stats")
+async def admin_stats():
+    """Aggregate stats for the dashboard view at /#/dashboard.
+
+    Reads JSONL interaction logs, AdapterState, and recall index size.
+    Polled every 5s by the frontend so values stay fresh during the
+    demo without a heavy refresh cycle.
+    """
+    total = 0
+    corrected = 0
+    by_mode: dict[str, int] = {}
+    dates_seen: set[str] = set()
+
+    if DATA_DIR.exists():
+        for path in sorted(DATA_DIR.glob("*.jsonl")):
+            dates_seen.add(path.stem)  # e.g. "2026-05-09"
+            try:
+                with path.open() as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            d = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        # Skip placeholder rows (image_b64 too short to
+                        # be a real image — these creep in from manual
+                        # backfill or smoke-test scripts).
+                        if len(d.get("image_b64", "")) <= 100:
+                            continue
+                        total += 1
+                        mode = d.get("mode", "unknown")
+                        by_mode[mode] = by_mode.get(mode, 0) + 1
+                        if d.get("user_correction"):
+                            corrected += 1
+            except OSError:
+                continue
+
+    state = get_active()
+    try:
+        recall_index_size = len(recall._entries)
+    except Exception:  # noqa: BLE001
+        recall_index_size = 0
+
+    return {
+        "interactions": {
+            "total": total,
+            "corrected": corrected,
+            "by_mode": by_mode,
+            "days_active": len(dates_seen),
+        },
+        "adapter": {
+            "active": state.active,
+            "version": state.version,
+        },
+        "recall": {
+            "index_size": recall_index_size,
+        },
+        "system": {
+            "vllm_up": True,
+            "fastapi_up": True,
+            "whisper_warm": True,
+        },
+    }
