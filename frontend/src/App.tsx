@@ -3,6 +3,7 @@ import { CameraButton, type CapturePhase } from '@/components/CameraButton';
 import { CorrectionUI } from '@/components/CorrectionUI';
 import { ModePill, MODE_LABELS } from '@/components/ModePill';
 import { ResponseDisplay } from '@/components/ResponseDisplay';
+import { Dashboard } from '@/dashboard/Dashboard';
 import { useCamera } from '@/hooks/useCamera';
 import {
   describe,
@@ -16,7 +17,30 @@ import { looksLikeRecall } from '@/lib/recallIntent';
 import { haptic } from '@/lib/haptic';
 import { audioCue } from '@/lib/audioCues';
 
+// Hash routing — HF Static Spaces 404 on path-based routes (no SPA
+// fallback to index.html), but they serve index.html for "/" and the
+// JS reads location.hash. So `/#/dashboard` works on any static host.
+function useHashRoute(): string {
+  const [hash, setHash] = useState(
+    typeof window === 'undefined' ? '' : window.location.hash,
+  );
+  useEffect(() => {
+    const onChange = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', onChange);
+    return () => window.removeEventListener('hashchange', onChange);
+  }, []);
+  return hash;
+}
+
 function App() {
+  const hash = useHashRoute();
+  if (hash === '#/dashboard' || hash === '#dashboard') {
+    return <Dashboard />;
+  }
+  return <MainApp />;
+}
+
+function MainApp() {
   const [mode, setMode] = useState<Mode>('scene');
   const [description, setDescription] = useState<string | null>(null);
   const [question, setQuestion] = useState<string | null>(null);
@@ -266,6 +290,16 @@ function App() {
           onClose={() => setCurrentInteractionId(null)}
         />
       )}
+
+      {/* Discreet link to the dashboard. Judges who explore the page
+          find it; demo viewers who only watch the camera flow don't
+          notice it. */}
+      <a
+        href="#/dashboard"
+        className="self-end text-xs text-slate-500 hover:text-slate-300"
+      >
+        stats →
+      </a>
     </main>
   );
 }
