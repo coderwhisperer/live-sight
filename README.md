@@ -102,6 +102,12 @@ you want the backend reachable from a phone — see
 [docs/wiki/hf-space-runbook.md](docs/wiki/hf-space-runbook.md) for the
 redeploy procedure when the tunnel rotates.
 
+## Reproducibility
+
+- Code: this repo
+- LoRA adapters: [friendly-coder-ai/live-sight](https://huggingface.co/friendly-coder-ai/live-sight) (private — request access for full reproducibility)
+- Training data: [friendly-coder-ai/live-sight-data](https://huggingface.co/datasets/friendly-coder-ai/live-sight-data) (private — contains personal images)
+
 ## Project context
 
 AMD Developer Hackathon submission, May 2026. Source of truth for project
